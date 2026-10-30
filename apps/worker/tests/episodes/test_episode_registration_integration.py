@@ -28,6 +28,7 @@ from sceneops_core.provenance import RevisionDecision, manifest_artifact_id_for
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
 from sceneops_db.models.datasets import DatasetVersionMemberModel
 from sceneops_db.session import get_async_sessionmaker
+from sceneops_storage import PayloadUriResolver
 from sceneops_worker.core.dependencies import create_worker_context
 from sceneops_worker.episodes.registration import (
     EpisodeManifestRejectedError,
@@ -36,6 +37,11 @@ from sceneops_worker.episodes.registration import (
 )
 
 RECORDING_CHECKSUM = "sha256:" + "1" * 64
+
+
+def _payload_id(ref) -> str:
+    """The payload artifact id a recording payload's Logical URI names."""
+    return ref.logical_uri().key.rpartition("/")[2]
 
 
 class _Env:
@@ -62,30 +68,33 @@ class _Env:
             build_config=build_config,
         )
 
-    def payload_uri(self, artifact_id: str) -> str:
-        return f"{self.settings.artifact_root_uri}/payloads/{artifact_id}"
+    def payload_uri(self, ref) -> str:
+        """Where the recording builders store the payload ``ref`` names."""
+        return PayloadUriResolver.from_settings(self.settings.artifact).resolve(ref.uri)
 
     async def publish(self, manifest) -> str:
         async with get_async_sessionmaker()() as session:
             ctx = self.context(session)
             for occurrence in manifest.occurrences():
                 ref = occurrence.payload
-                if ref is None or await ctx.artifact_record_store.get(ref.artifact_id):
+                if ref is None or await ctx.artifact_record_store.get(_payload_id(ref)):
                     continue
                 rank = int(occurrence.occurrence_id.rsplit("-", 1)[1])
                 await ctx.artifact_store.write_bytes(
-                    self.payload_uri(ref.artifact_id),
+                    self.payload_uri(ref),
                     f"payload:{occurrence.topic}:{rank}".encode(),
                 )
                 await ctx.artifact_record_store.create(
-                    artifact_id=ref.artifact_id,
+                    artifact_id=_payload_id(ref),
                     ref=ArtifactRef(
                         kind=ArtifactKind.OBSERVATION_PAYLOAD,
-                        uri=self.payload_uri(ref.artifact_id),
+                        uri=self.payload_uri(ref),
                         media_type=ref.media_type,
                         size_bytes=ref.size_bytes,
                         checksum=ref.checksum,
                     ),
+                    owner_type=ArtifactOwnerType.ROBOT_RUN,
+                    owner_id=manifest.lineage.source.robot_run_id,
                 )
             episode_id = episode_id_for(manifest.lineage.source)
             published = await ctx.episode_artifact_store.publish_canonical_manifest(
@@ -236,7 +245,7 @@ async def test_a_payload_object_missing_from_minio_is_rejected(env):
     payload = manifest.observations[0].payload
     async with get_async_sessionmaker()() as session:
         await env.context(session).artifact_store.delete_prefix(
-            env.payload_uri(payload.artifact_id)
+            env.payload_uri(payload)
         )
     with pytest.raises(EpisodeManifestRejectedError, match="has no object"):
         await env.register([artifact_id])
@@ -249,9 +258,11 @@ async def test_a_payload_object_of_another_size_is_rejected(env):
     payload = manifest.observations[1].payload
     async with get_async_sessionmaker()() as session:
         await env.context(session).artifact_store.write_bytes(
-            env.payload_uri(payload.artifact_id), b"x"
+            env.payload_uri(payload), b"x"
         )
-    with pytest.raises(EpisodeManifestRejectedError, match="1 bytes, recorded"):
+    with pytest.raises(
+        EpisodeManifestRejectedError, match="has 1 bytes; the reference"
+    ):
         await env.register([artifact_id])
     assert await env.revisions() == {}
 

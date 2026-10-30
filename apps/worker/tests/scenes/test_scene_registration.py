@@ -25,6 +25,11 @@ from sceneops_worker.scenes.registration import (
 RECORDING_CHECKSUM = "sha256:" + "1" * 64
 
 
+def _payload_id(ref) -> str:
+    """The payload artifact id a recording payload's Logical URI names."""
+    return ref.logical_uri().key.rpartition("/")[2]
+
+
 async def _register(world, artifacts):
     return await register_scenes(
         context=world.context,
@@ -340,7 +345,7 @@ async def test_payload_ref_must_match_its_artifact_record_exactly(
 ):
     manifest = scene_world.manifest()
     artifact = await scene_world.publish(manifest)
-    payload_id = manifest.observations[0].payload.artifact_id
+    payload_id = _payload_id(manifest.observations[0].payload)
     scene_world.artifacts[payload_id] = scene_world.artifacts[payload_id].model_copy(
         update={field: value}
     )
@@ -354,7 +359,7 @@ async def test_a_payload_record_without_its_object_is_rejected(scene_world):
     object is missing from the store fails registration."""
     manifest = scene_world.manifest()
     artifact = await scene_world.publish(manifest)
-    payload = scene_world.artifacts[manifest.observations[0].payload.artifact_id]
+    payload = scene_world.artifacts[_payload_id(manifest.observations[0].payload)]
     await scene_world.artifact_store.delete_prefix(payload.uri)
 
     with pytest.raises(SceneManifestRejectedError, match="has no object"):
@@ -365,15 +370,15 @@ async def test_a_payload_record_without_its_object_is_rejected(scene_world):
 async def test_a_payload_object_of_another_size_is_rejected(scene_world):
     manifest = scene_world.manifest()
     artifact = await scene_world.publish(manifest)
-    payload = scene_world.artifacts[manifest.observations[0].payload.artifact_id]
+    payload = scene_world.artifacts[_payload_id(manifest.observations[0].payload)]
     await scene_world.artifact_store.write_bytes(payload.uri, b"x")
 
-    with pytest.raises(SceneManifestRejectedError, match="1 bytes, recorded"):
+    with pytest.raises(SceneManifestRejectedError, match="has 1 bytes; the reference"):
         await _register(scene_world, [artifact])
     assert scene_world.scenes.working == ({}, {})
 
 
-async def test_payload_objects_are_checked_with_one_listing_per_prefix(scene_world):
+async def test_payload_objects_are_checked_with_one_listing_per_run(scene_world):
     from unittest.mock import MagicMock
 
     store = scene_world.artifact_store
@@ -385,22 +390,48 @@ async def test_payload_objects_are_checked_with_one_listing_per_prefix(scene_wor
     await _register(scene_world, [artifact])
 
     listings = scene_world.context.artifact_store.list_objects.call_args_list
-    assert [c.args for c in listings] == [(f"{scene_world.root}/payloads",)]
+    assert [c.args for c in listings] == [
+        (f"{scene_world.settings.observation_payload_root_uri}/run-001",)
+    ]
 
 
-async def test_payload_location_does_not_affect_the_revision(scene_world):
-    """Bytes stored under another key (and a record that says so) register
-    the same revision: the manifest names payloads by id, not location."""
+async def test_a_payload_record_stored_off_its_key_is_rejected(scene_world):
+    """The record found by the URI's artifact id must register the object the
+    URI resolves to: bytes moved elsewhere (and a record that says so) are not
+    what the manifest names."""
     manifest = scene_world.manifest()
     artifact = await scene_world.publish(manifest)
+    payload_id = _payload_id(manifest.observations[0].payload)
+    record = scene_world.artifacts[payload_id]
+    moved = f"{scene_world.root}/moved/{payload_id}"
+    await scene_world.artifact_store.write_bytes(
+        moved, await scene_world.artifact_store.read_bytes(record.uri)
+    )
+    scene_world.artifacts[payload_id] = record.model_copy(update={"uri": moved})
+
+    with pytest.raises(SceneManifestRejectedError, match="is stored at"):
+        await _register(scene_world, [artifact])
+    assert scene_world.scenes.working == ({}, {})
+
+
+async def test_the_storage_root_does_not_affect_the_revision(scene_world):
+    """The manifest names payloads by Logical URI: the same bytes under
+    another configured root register the same revision."""
+    from sceneops_core.config import ArtifactSettings
+
+    manifest = scene_world.manifest()
+    artifact = await scene_world.publish(manifest)
+    moved = ArtifactSettings(root_uri=f"{scene_world.root}/moved-root")
+    old_root = scene_world.settings.observation_payload_root_uri
     for observation in manifest.observations:
-        payload_id = observation.payload.artifact_id
+        payload_id = _payload_id(observation.payload)
         record = scene_world.artifacts[payload_id]
-        moved = f"{scene_world.root}/moved/{payload_id}"
+        uri = record.uri.replace(old_root, moved.observation_payload_root_uri, 1)
         await scene_world.artifact_store.write_bytes(
-            moved, await scene_world.artifact_store.read_bytes(record.uri)
+            uri, await scene_world.artifact_store.read_bytes(record.uri)
         )
-        scene_world.artifacts[payload_id] = record.model_copy(update={"uri": moved})
+        scene_world.artifacts[payload_id] = record.model_copy(update={"uri": uri})
+    scene_world.context.settings.artifact = moved
 
     result = await _register(scene_world, [artifact])
 

@@ -154,25 +154,40 @@ Canonical EpisodeManifest revisions follow the same rule at
 artifacts are keyed by the DatasetVersion they were aligned for, under
 `{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/aligned/`.
 
-Observation payloads are not addressed by readers through a key
-convention: a manifest references each payload by its
-`OBSERVATION_PAYLOAD` ArtifactRecord id, and the record's `uri` is the only
-place its location is stored. Both recording builders (Scene and Episode)
-write them write-once, through one shared store, at
+Observation payloads are written write-once by both recording builders (Scene
+and Episode), through one shared store, at
 
 ```text
 {ARTIFACT_ROOT_URI}/observation_payloads/{robot_run_id}/{artifact_id}
 ```
 
-(`ArtifactSettings.observation_payload_prefix`). The artifact id is
+(`ArtifactSettings.observation_payload_prefix`), each with an
+`OBSERVATION_PAYLOAD` ArtifactRecord owned by the RobotRun. The artifact id is
 deterministic per recording message and extraction, so identical bytes at
 an existing key are reused and different bytes are a conflict; a Scene and
 an Episode build of the same RobotRun share every payload they both extract.
 
-A Scene or Episode built from preserved content writes no payload: its `SourceFileRef`s name
-files of its content by `(content_id, path)`, and their location is derived from the
-content's inventory ArtifactRecord (`{sources_root}/contents/{content_id}/files/{path}`,
-above). The preserved files are never copied into `observation_payloads/`.
+A Scene or Episode built from preserved content writes no payload: it references the
+files of its content in place, at `{sources_root}/contents/{content_id}/files/{path}`
+(above). The preserved files are never copied into `observation_payloads/`.
+
+A manifest references every payload by Logical URI
+([ADR-016](../adr/016-logical-uri-and-verified-payload-access.md),
+[ADR-017](../adr/017-unified-payload-ref-and-versioned-manifests.md)): a namespace and
+the object key under that namespace's configured root, never a bucket, endpoint,
+backend or ArtifactRecord id.
+
+| Namespace | Root (`ArtifactSettings`) | Key |
+| --- | --- | --- |
+| `sceneops://observation-payloads/` | `observation_payload_root_uri` | `{robot_run_id}/{artifact_id}` |
+| `sceneops://sources/` | `source_root_uri` | `contents/{content_id}/files/{path}` |
+
+`sceneops_storage.PayloadUriResolver` maps a Logical URI to `{root}/{key}`, and
+`sceneops_storage.VerifiedPayloadReader` returns the bytes only after their size and
+full sha256 equal the reference. Registration accepts a URI only when it resolves to
+exactly where the source's records place the object (the payload's ArtifactRecord, or
+the content's inventory), so producers must write under the configured roots. Moving a
+root changes no manifest; changing the key layout needs a migration.
 
 ### Analytics (Parquet)
 

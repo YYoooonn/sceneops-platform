@@ -1,6 +1,6 @@
 from .enums import SceneFrameRole, SceneGroupKind, SceneModality
 from .manifests import (
-    SCENE_MANIFEST_SCHEMA_V4,
+    SCENE_MANIFEST_SCHEMA_V5,
     FrameTransform,
     ImageSize,
     NonCanonicalSceneManifestError,
@@ -26,7 +26,7 @@ from .records import (
 from .runs import SceneProfileRunRecord, SceneValidationRunRecord
 
 __all__ = [
-    "SCENE_MANIFEST_SCHEMA_V4",
+    "SCENE_MANIFEST_SCHEMA_V5",
     "FrameTransform",
     "ImageSize",
     "NonCanonicalSceneManifestError",

@@ -136,12 +136,15 @@ these exactly.
   one clock (default: the Episode window clock) and rejects a stream on
   any other clock. Observation and state fields become observation
   channels and action fields action channels, named `<topic>#<field>`; an
-  observation payload is a reference channel `<topic>`; boolean / string
+  observation payload is a reference channel `<topic>` whose value carries
+  the payload reference whole (`reference_uri` = its Logical URI;
+  `reference_metadata` = checksum, size, media type and selector, if any),
+  the same for every source; no payload is read. Boolean / string
   fields and event streams are not aligned. Canonical ns timestamps are
   floored to us. Default policies come from value kind and role (action ->
   `previous`, otherwise `nearest`), never from channel names. The timeline
   spans the Episode window when aligning on its clock. Alignment semantics
-  version `v2`.
+  version `v3`.
 
 ### Signal presence (2.2, 2.5A, 2.7A)
 
@@ -282,10 +285,11 @@ per-instance caches.
   sync read path in `sceneops-storage` to build a lazy bridge on safely.
 - Dense feature projection (2.7A) supports numeric scalar/vector only --
   orientation/reference/binary values are not projectable in v1.
-- `reference_channel`/`reference_metadata` on a `REFERENCE`-kind
-  `AlignedValue` are not recoverable from `learning_signals.parquet` --
-  `LEARNING_SIGNALS_SCHEMA` never persisted those two columns (Request
-  2.5); only `reference_uri`/`reference_modality` round-trip.
+- `reference_channel` and `reference_metadata` other than its selector on a
+  `REFERENCE`-kind `AlignedValue` are not recoverable from
+  `learning_signals.parquet` -- `LEARNING_SIGNALS_SCHEMA` does not persist them;
+  `reference_uri`, `reference_selector` (canonical JSON) and
+  `reference_modality` round-trip.
 - No missing-value filling/masking/drop policy exists --
   `MissingFeaturePolicy.ERROR` is the only implemented member.
 - LeRobot is the only external dataset format adapter -- see [dataset-interoperability.md](./dataset-interoperability.md).

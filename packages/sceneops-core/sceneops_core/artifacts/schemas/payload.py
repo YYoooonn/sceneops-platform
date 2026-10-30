@@ -1,144 +1,108 @@
-"""Strict reference to one canonical observation payload (ADR-007 §27.5,
-ADR-015 §6.5).
+"""Strict references to canonical observation payloads (ADR-007 §27.5,
+ADR-015 §6.5, ADR-016, ADR-017).
 
-``PayloadRef`` is a closed union discriminated by ``kind``:
+``PayloadRef`` is the one payload reference of canonical manifests
+(SceneManifest v5, EpisodeManifest v4), the same for every source:
 
-    ArtifactPayloadRef  "artifact"     a SceneOps-owned payload object
-                                       (recording-derived payloads)
-    SourceFileRef       "source_file"  one preserved file of a registered
-                                       SourceContent, optionally one frame of it
+    PayloadRef(uri, checksum, size_bytes, media_type, selector)
 
-A canonical manifest never points into an external dataset directory, a
-source recording or a storage location. An ``ArtifactPayloadRef`` is
-identified by the SceneOps ArtifactRecord that registered its immutable
-bytes, and pinned by their checksum and size:
+``uri`` is the Logical URI of immutable stored bytes (ADR-016), and
+``checksum`` / ``size_bytes`` pin the whole stored object, also when a
+``selector`` picks one part of it. The reference names no artifact, content,
+RobotRun, source kind or source path, so a recording-derived payload and a
+preserved dataset file are the same kind of value, and moving a storage root
+or backend changes neither the manifest nor its checksum. A ``PayloadRef`` is
+a ``PinnedPayload``: ``VerifiedPayloadReader`` reads and verifies its bytes
+as it is.
 
-    ArtifactPayloadRef.artifact_id -> ArtifactRecord -> uri -> ArtifactStore
+Whose bytes a URI may name is a registration fact, not part of this schema:
+a recording-built unit references its own RobotRun's observation payloads,
+a content-built unit files of its own SourceContent
+(``sceneops_worker.payload_registration``).
 
-A ``SourceFileRef`` is identified by its content and its path in that
-content's inventory, and pinned by the inventory entry's sha256 and size:
-
-    SourceFileRef.(content_id, path) -> inventory entry -> content files -> ArtifactStore
-
-Where the bytes physically live is the ArtifactRecord's (or the inventory
-ArtifactRecord's) concern, so moving a storage root or backend never changes
-a manifest or its checksum. A reference resolves only to bytes whose
-checksum and size equal the reference's; the checksum is what a byte-level
-reader verifies against. Consumers that cannot resolve a reference kind
-refuse it explicitly; resolution is the one place downstream of canonical
-manifests that dispatches on the kind (MS-10).
-
-``media_type`` is an open, lowercase ``type/subtype`` identifier (RFC 6838
-shape, no parameters) that must fully specify the payload's encoding and
-layout, e.g. ``image/jpeg`` or ``application/x.nuscenes.lidar-pcd-bin``.
-Consumers dispatch on it instead of assuming a source's file layout. Like
-other open identifiers it is validated, never normalized.
+``media_type`` is validated by ``sceneops_core.artifacts.media_types``.
 """
 
 from __future__ import annotations
 
-import re
-from typing import Annotated, Final, Literal, TypeAlias
+from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
-
-from sceneops_core.common.checksums import SHA256_CHECKSUM_PATTERN
-from sceneops_core.common.identifiers import validate_local_id
-from sceneops_core.provenance.source_time import SourceTimestampNs
-from sceneops_core.sources.content import validate_content_id, validate_source_path
-
-MEDIA_TYPE_PATTERN: Final = (
-    r"^[a-z0-9][a-z0-9!#$&^_.+-]{0,62}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$"
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
 )
-_MEDIA_TYPE_RE = re.compile(MEDIA_TYPE_PATTERN)
+
+from sceneops_core.artifacts.logical_uri import LogicalUri, parse_logical_uri
+from sceneops_core.artifacts.media_types import (
+    media_top_level_type,
+    validate_media_type,
+)
+from sceneops_core.common.checksums import SHA256_CHECKSUM_PATTERN
+from sceneops_core.provenance.source_time import SourceTimestampNs
 
 
-def validate_media_type(value: str) -> str:
-    if not isinstance(value, str) or not _MEDIA_TYPE_RE.fullmatch(value):
-        raise ValueError(
-            f"media_type must be a lowercase 'type/subtype' without parameters, "
-            f"got {value!r}"
-        )
-    return value
-
-
-class ArtifactPayloadRef(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    kind: Literal["artifact"] = "artifact"
-    artifact_id: StrictStr
-    checksum: StrictStr = Field(pattern=SHA256_CHECKSUM_PATTERN)
-    size_bytes: StrictInt = Field(ge=1)
-    media_type: StrictStr
-
-    @field_validator("artifact_id")
-    @classmethod
-    def _check_artifact_id(cls, value: str) -> str:
-        return validate_local_id(value, field="payload artifact_id")
-
-    @field_validator("media_type")
-    @classmethod
-    def _check_media_type(cls, value: str) -> str:
-        return validate_media_type(value)
-
-
-class SourceFrame(BaseModel):
-    """One frame of a preserved time-based file (a video), selected by its
-    presentation time in that file's own time base. It is not a canonical
-    timestamp: it names no clock domain and is never compared with one."""
+class VideoFrameSelector(BaseModel):
+    """One frame of a video payload, selected by its presentation time in the
+    video's own time base. It is not a canonical timestamp: it names no clock
+    domain and is never compared with one."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    kind: Literal["video_frame"] = "video_frame"
     timestamp_ns: SourceTimestampNs
 
+    def accepts(self, media_type: str) -> bool:
+        return media_top_level_type(media_type) == "video"
 
-class SourceFileRef(BaseModel):
-    """One preserved file of a registered SourceContent, kept as the source
-    holds it: no payload copy is extracted.
 
-    ``sha256`` and ``size_bytes`` are the content inventory entry's for
-    ``path``; registration verifies them against the inventory and the
-    stored object. ``media_type`` is asserted by the format builder from
-    source-format evidence (the inventory records none) and is covered by
-    the manifest checksum. ``frame`` selects one frame inside the file;
-    absent, the reference is the whole file."""
+# The parts of a payload a reference can select. Each selector carries its
+# own ``kind`` so another one can be added without re-reading existing bytes.
+PayloadSelector: TypeAlias = VideoFrameSelector
+
+
+class PayloadRef(BaseModel):
+    """Immutable payload bytes by Logical URI, pinned by their full-object
+    sha256 and size; ``selector`` absent means the whole object."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    kind: Literal["source_file"] = "source_file"
-    content_id: StrictStr
-    path: StrictStr
-    sha256: StrictStr = Field(pattern=SHA256_CHECKSUM_PATTERN)
+    uri: StrictStr
+    checksum: StrictStr = Field(pattern=SHA256_CHECKSUM_PATTERN)
     size_bytes: StrictInt = Field(ge=0)
     media_type: StrictStr
-    frame: SourceFrame | None = None
+    selector: PayloadSelector | None = None
 
-    @field_validator("content_id")
+    @field_validator("uri")
     @classmethod
-    def _check_content_id(cls, value: str) -> str:
-        return validate_content_id(value)
-
-    @field_validator("path")
-    @classmethod
-    def _check_path(cls, value: str) -> str:
-        return validate_source_path(value)
+    def _check_uri(cls, value: str) -> str:
+        parse_logical_uri(value)
+        return value
 
     @field_validator("media_type")
     @classmethod
     def _check_media_type(cls, value: str) -> str:
         return validate_media_type(value)
 
+    @model_validator(mode="after")
+    def _check_selector(self) -> PayloadRef:
+        if self.selector is not None and not self.selector.accepts(self.media_type):
+            raise ValueError(
+                f"a {self.selector.kind} selector cannot select part of a "
+                f"{self.media_type} payload"
+            )
+        return self
 
-PayloadRef: TypeAlias = Annotated[
-    ArtifactPayloadRef | SourceFileRef, Field(discriminator="kind")
-]
+    def logical_uri(self) -> LogicalUri:
+        return parse_logical_uri(self.uri)
 
 
 __all__ = [
-    "MEDIA_TYPE_PATTERN",
-    "ArtifactPayloadRef",
     "PayloadRef",
-    "SourceFileRef",
-    "SourceFrame",
-    "validate_media_type",
+    "PayloadSelector",
+    "VideoFrameSelector",
 ]

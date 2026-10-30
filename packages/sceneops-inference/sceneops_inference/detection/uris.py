@@ -1,10 +1,8 @@
 """URI helpers for detection inference image location.
 
 All image locations flow through these functions so the contract between
-the worker adapter and the inference server stays consistent.
-
-Current support: file:// (local filesystem / shared volume)
-Future:          s3://, minio://, gs://  via an ImageResolver abstraction
+the worker adapter and the inference server stays consistent. The server reads
+file:// (local filesystem / shared volume) and s3:// locations.
 """
 
 from __future__ import annotations

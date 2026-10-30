@@ -9,7 +9,7 @@ never reads a SourceSnapshot or its descriptor, writes nothing and plans no
 payload: every reading stays the preserved file it is. CAN, maps and the
 annotation tables are never read.
 
-Canonical rules (frozen by ``semantics_version`` 1):
+Canonical rules (frozen by ``semantics_version`` 2):
 
     unit           one Scene per native scene; unit_key = scene.token
                    (scene.name is display data and enters nothing)
@@ -35,9 +35,10 @@ Canonical rules (frozen by ``semantics_version`` 1):
     ego poses      one per reading's ego_pose: pose-<ego_pose.token>, global -> ego,
                    at ego_pose.timestamp, linked from the reading as ego_pose_id
     observations   <channel>-<rank, 8 digits>, rank in (timestamp, token) order of
-                   the channel; payload = SourceFileRef of the reading's file with
-                   the inventory's sha256 and size; media type from modality, file
-                   suffix and fileformat (D3); a camera's image size from width /
+                   the channel; payload = PayloadRef of the reading's preserved
+                   file in place (sources Logical URI, the inventory's sha256 and
+                   size); media type from modality, file suffix and fileformat
+                   (D3); a camera's image size from width /
                    height; calibration_id and ego_pose_id from the reading's own
                    tokens; native_ref = sample_data.token
     keyframes      one group per sample: keyframe-<rank, 6 digits> in (timestamp,
@@ -52,7 +53,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Final
 
-from sceneops_core.artifacts.schemas import SourceFileRef
+from sceneops_core.artifacts.schemas import PayloadRef
 from sceneops_core.common.identifiers import validate_local_id
 from sceneops_core.provenance import (
     ClockDomain,
@@ -78,7 +79,7 @@ from sceneops_core.scenes.schemas import (
     SceneObservationGroup,
     ScenePose,
 )
-from sceneops_sources import ContentFileError, ContentFiles
+from sceneops_sources import ContentFileError, ContentFiles, content_file_payload_ref
 from sceneops_sources.nuscenes import (
     NuScenesCalibratedSensor,
     NuScenesContent,
@@ -94,7 +95,8 @@ from .plan import PlannedScene, SceneBuildPlan
 NUSCENES_SCENE_PRODUCER_ID: Final = "sceneops.nuscenes_scene_builder"
 # Bump whenever the canonical bytes a build produces change for the same
 # content and configuration (it enters the producer fingerprint).
-NUSCENES_SCENE_SEMANTICS_VERSION: Final = 1
+# 2: SceneManifest v5 (a reading is a PayloadRef by Logical URI).
+NUSCENES_SCENE_SEMANTICS_VERSION: Final = 2
 NUSCENES_CLOCK: Final = "nuscenes.timestamp"
 NUSCENES_CLOCK_DOMAIN: Final = ClockDomain(
     clock=NUSCENES_CLOCK, origin=ClockOrigin.UNIX_EPOCH, resolution_ns=1_000
@@ -263,7 +265,7 @@ def _payload(
     modality: SceneModality,
     pinned: PinnedContent,
     entries: dict,
-) -> SourceFileRef:
+) -> PayloadRef:
     suffix, fileformat, media_type = _MEDIA_TYPES[modality]
     if not reading.filename.endswith(suffix) or reading.fileformat != fileformat:
         raise NuScenesSceneBuildError(
@@ -271,13 +273,8 @@ def _payload(
             f"{reading.filename!r} (fileformat {reading.fileformat!r}); the evidence "
             f"for {media_type} is a {suffix} file of fileformat {fileformat!r}"
         )
-    entry = entries[reading.filename]
-    return SourceFileRef(
-        content_id=pinned.content_id,
-        path=entry.path,
-        sha256=entry.sha256,
-        size_bytes=entry.size_bytes,
-        media_type=media_type,
+    return content_file_payload_ref(
+        pinned.content_id, entries[reading.filename], media_type=media_type
     )
 
 

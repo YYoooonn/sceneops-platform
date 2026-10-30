@@ -9,7 +9,9 @@ made here, never in canonicalization:
                    a stream on any other clock is rejected, never converted
     channels       observation and state fields -> observation channels, action
                    fields -> action channels, named ``<topic>#<field>``; an
-                   observation payload is a reference channel named ``<topic>``.
+                   observation payload is a reference channel named ``<topic>``
+                   whose value carries the payload reference as it is (Logical
+                   URI, integrity and selector); no payload is read here.
                    Numeric fields align as scalars, numeric lists as vectors;
                    boolean and string fields and event streams are not aligned
     quantization   canonical ns -> integer us by floor division
@@ -24,7 +26,6 @@ Deterministic: identical inputs always produce an identical output.
 
 from __future__ import annotations
 
-from sceneops_core.artifacts.schemas import SourceFileRef
 from sceneops_core.episodes.recording_build import EpisodeStreamRole
 from sceneops_core.episodes.schemas import (
     EpisodeManifest,
@@ -79,23 +80,23 @@ def _field_value(value: object) -> AlignedValue | None:
 def _payload_value(
     stream: EpisodeStream, occurrence: EpisodeOccurrence
 ) -> AlignedValue:
+    """The occurrence's payload reference, carried whole: the URI names the
+    stored object and a selector, when present, the part of it the occurrence
+    is (a video frame), so dropping it would make the reference name other
+    bytes."""
     payload = occurrence.payload
     assert payload is not None
+    metadata = payload.model_dump(mode="json", exclude={"uri"}, exclude_none=True)
     return AlignedValue(
         kind=AlignedValueKind.REFERENCE,
         reference_channel=stream.topic,
-        reference_metadata={
-            "artifact_id": payload.artifact_id,
-            "checksum": payload.checksum,
-            "size_bytes": payload.size_bytes,
-            "media_type": payload.media_type,
-        },
+        reference_uri=payload.uri,
+        reference_metadata=metadata,
     )
 
 
 def require_alignable(manifest: EpisodeManifest) -> None:
-    """Refuse an Episode whose content this alignment cannot represent:
-    reference channels carry ArtifactPayloadRef metadata only, and a
+    """Refuse an Episode whose content this alignment cannot represent: a
     transition stream is neither an observation nor an action channel."""
     transitions = [
         s.topic for s in manifest.streams if s.role == EpisodeStreamRole.TRANSITION
@@ -104,18 +105,6 @@ def require_alignable(manifest: EpisodeManifest) -> None:
         raise UnsupportedEpisodeContentError(
             f"the Episode has transition streams {transitions}, which alignment "
             "does not support"
-        )
-    files = sorted(
-        {
-            o.topic
-            for o in manifest.occurrences()
-            if isinstance(o.payload, SourceFileRef)
-        }
-    )
-    if files:
-        raise UnsupportedEpisodeContentError(
-            f"streams {files} reference preserved source files, which alignment "
-            "cannot resolve"
         )
 
 

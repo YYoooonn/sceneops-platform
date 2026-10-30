@@ -357,7 +357,7 @@ def expected_scene(facts: RecordingFacts, config: dict[str, Any]) -> SceneExpect
         calibrations=calibrations,
         producer={
             "producer_id": "sceneops.recording_scene_builder",
-            "semantics_version": 5,
+            "semantics_version": 6,
         },
     )
 

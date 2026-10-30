@@ -2,14 +2,19 @@
 
 The same strict loader, validator and profiler run over a recording-sourced
 Scene and a content-sourced nuScenes Scene, with no source branch: both are
-SceneManifest v4, and consumers see only its structure.
+SceneManifest v5 with the unified PayloadRef (ADR-017), and consumers see only
+its structure.
 """
 
 from __future__ import annotations
 
 from sceneops_core.provenance import PinnedContent
 from sceneops_core.scenes.nuscenes_build import NuScenesSceneBuildConfig
-from sceneops_core.scenes.schemas import load_canonical_scene_manifest
+from sceneops_core.artifacts.schemas import PayloadRef
+from sceneops_core.scenes.schemas import (
+    SCENE_MANIFEST_SCHEMA_V5,
+    load_canonical_scene_manifest,
+)
 from sceneops_core.scenes.testing import build_scene_manifest
 from sceneops_core.sources import SnapshotSelection
 from sceneops_scenes.nuscenes_builder import plan_nuscenes_scenes
@@ -35,7 +40,12 @@ def _content_scene(root):
 def test_one_loader_validator_and_profiler_for_both_sources(tmp_path):
     recording = build_scene_manifest()
     content = _content_scene(tmp_path)
-    assert recording.schema_version == content.schema_version
+    assert (
+        recording.schema_version == content.schema_version == (SCENE_MANIFEST_SCHEMA_V5)
+    )
+    assert {type(o.payload) for m in (recording, content) for o in m.observations} == {
+        PayloadRef
+    }
     for manifest, required in (
         (recording, ["CAM_FRONT", "LIDAR_TOP"]),
         (content, ["CAM_FRONT", "LIDAR_TOP"]),

@@ -16,7 +16,8 @@ Two passes over the file:
                             time; segment on the declared clock; declare every
                             clock a Scene uses with origin ``source``; build the
                             complete SceneManifest set and the payload plan
-                            (artifact id, sha256, size, media type per payload).
+                            (artifact id, sha256, size, media type per payload;
+                            the manifest names each by its Logical URI).
                             Nothing is written.
     iter_planned_payloads   re-read the selected messages and yield each planned
                             payload's bytes, verified against the plan.
@@ -26,7 +27,7 @@ unsupported encoding, a selected topic absent from the recording, missing or
 changing calibration, distortion the manifest cannot carry, a sensor frame
 calibrated against a frame other than the ego frame.
 
-Identity rules (frozen by ``semantics_version`` 5):
+Identity rules (frozen by ``semantics_version`` 6):
 
     observation_id   <topic slug>-<rank>: rank in the channel's canonical order
                      (canonical timestamp, then MCAP sequence when every message
@@ -48,7 +49,9 @@ Identity rules (frozen by ``semantics_version`` 5):
                      RobotRun reuses it and two configurations can never give
                      one id different bytes. It is scoped to the RobotRun:
                      an equivalent recording of another acquisition owns its
-                     own payload artifacts (ADR-007 §30.9).
+                     own payload artifacts (ADR-007 §30.9). An observation
+                     references it as a PayloadRef by the Logical URI of its
+                     published key {robot_run_id}/{artifact id}.
 """
 
 from __future__ import annotations
@@ -117,9 +120,9 @@ from .plan import PlannedScene, SceneBuildPlan
 RECORDING_SCENE_PRODUCER_ID: Final = "sceneops.recording_scene_builder"
 # Bump whenever the canonical bytes a build produces change for the same
 # recording and configuration: it enters the producer fingerprint, so a
-# changed builder is a different producer. 5: SceneManifest v4 (every
-# observation and group carries ``native_ref``, absent for a recording).
-RECORDING_SCENE_SEMANTICS_VERSION: Final = 5
+# changed builder is a different producer. 6: SceneManifest v5 (every
+# observation payload is a PayloadRef by Logical URI).
+RECORDING_SCENE_SEMANTICS_VERSION: Final = 6
 CAMERA_INFO_SCHEMA: Final = "sensor_msgs/msg/CameraInfo"
 TF_MESSAGE_SCHEMA: Final = "tf2_msgs/msg/TFMessage"
 
@@ -275,6 +278,7 @@ class _Planner:
         timestamp_ns = self._time(channel.time, message, header)
         data, media_type = extract_payload(channel, message, decoded)
         payload = PlannedPayload(
+            robot_run_id=self.revision.robot_run_id,
             artifact_id=observation_payload_artifact_id(
                 robot_run_id=self.revision.robot_run_id,
                 topic=message.topic,

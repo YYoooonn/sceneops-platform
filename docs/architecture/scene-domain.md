@@ -26,11 +26,12 @@ The manifest is authoritative; a revision record is an index over exactly one
 registered manifest. A DatasetVersion holds a Scene only through a member that
 pins one of its revisions ([Data model](./data-model.md) §3).
 
-## 1. SceneManifest v4
+## 1. SceneManifest
 
-Schema: `sceneops_core.scenes.schemas.manifests` (`schema_version =
-"sceneops.scene_manifest/v4"`). One schema serves both source kinds; the
-loader reads v4 only. Strict: unknown fields are rejected at every
+Schema: `sceneops_core.scenes.schemas.manifests`, version
+`sceneops.scene_manifest/v5`; the loader refuses every other version
+([ADR-017](../adr/017-unified-payload-ref-and-versioned-manifests.md)). One
+schema serves both source kinds. Strict: unknown fields are rejected at every
 level, and there is no free-form metadata. A source fact the schema cannot
 express is a contract amendment.
 
@@ -93,26 +94,25 @@ Rules the schema enforces:
   names: translations in metres (`*_m`), unit quaternions `[w, x, y, z]`
   (`rotation_wxyz`), box size `[width, length, height]` (`size_wlh_m`), and a
   `FrameTransform` maps points in `child_frame_id` into `parent_frame_id`.
-- **Payloads** are strict `PayloadRef`s (`sceneops_core.artifacts.schemas.payload`),
-  a union discriminated by `kind`, each with a `media_type` that fully
-  specifies encoding and layout and that consumers dispatch on:
+- **Payloads** are strict references (`sceneops_core.artifacts.schemas.payload`),
+  each with a `media_type` that fully specifies encoding and layout and that
+  consumers dispatch on. Every observation holds a `PayloadRef`, the same for
+  every source:
 
   ```text
-  ArtifactPayloadRef  kind "artifact": artifact_id, checksum, size_bytes; names the
-                      OBSERVATION_PAYLOAD ArtifactRecord (recording-derived payloads)
-                      artifact_id -> ArtifactRecord -> uri -> ArtifactStore
-  SourceFileRef       kind "source_file": content_id, path, sha256, size_bytes,
-                      frame (null for a whole file); names one preserved file of the
-                      Scene's own content, as its inventory pins it
-                      (content_id, path) -> inventory entry -> content files -> ArtifactStore
+  PayloadRef          uri (Logical URI, ADR-016), checksum and size_bytes of the whole
+                      stored object, media_type, selector (null | video_frame)
   ```
 
-  Neither names a location, so moving bytes updates ArtifactRecords and never
-  changes a manifest or its checksum. A `SourceFileRef` must name the Scene's
-  own content: a recording Scene, or a reference to another content, is
-  rejected. The one place downstream of manifests that dispatches on the kind
-  is the payload locator (`sceneops_worker.payloads.PayloadLocator`), which
-  requires the ArtifactRecord, or the inventory entry, to equal the reference.
+  A recording Scene names its RobotRun's observation payloads
+  (`sceneops://observation-payloads/{robot_run_id}/{artifact_id}`); a content
+  Scene names preserved files of its own content in place
+  (`sceneops://sources/contents/{content_id}/files/{path}`). The reference names
+  no artifact, content or source kind, and no location, so moving bytes under a
+  storage root never changes a manifest or its checksum. Which bytes a Scene may
+  reference is checked by registration (§5), not by the schema. Consumers read a
+  reference as it is through the verified payload reader; one that can only
+  decode whole objects refuses a selector.
 - **Native references.** `native_ref` is the source's own identifier of an
   observation or a group, verbatim (a nuScenes `sample_data.token` /
   `sample.token`); it occurs at most once among observations and once among
@@ -186,16 +186,22 @@ returns (ADR-015 §7).
 gate       manifest  each artifact is a SCENE_MANIFEST whose id is the revision's
                      deterministic id; bytes read back from the store match its
                      size + checksum; canonical strict parse
-           payloads  by kind: an ArtifactPayloadRef resolves to an
-                     OBSERVATION_PAYLOAD ArtifactRecord with exactly its checksum,
-                     size_bytes and media_type, whose object is present in the store
-                     with its recorded size (one listing per payload prefix); a
-                     SourceFileRef names a path of the registered content's
-                     inventory with exactly its sha256 and size, whose object is
-                     present with that size (one listing per content prefix)
 scope      the input is one build: one source (a RobotRun or a SourceContent),
            one producer fingerprint, built from that source's registered bytes
            (the recording checksum, or the content checksum)
+payloads   every PayloadRef of the input, in one batch against that source
+           (sceneops_worker.payload_registration):
+             recording  the URI is the payload key {robot_run_id}/{artifact_id} of
+                        the unit's own RobotRun; that artifact id's
+                        OBSERVATION_PAYLOAD ArtifactRecord is owned by the RobotRun,
+                        stored exactly where the URI resolves, with exactly the
+                        pinned checksum, size_bytes and media_type
+             content    the URI names a file of the unit's own content, where its
+                        registered inventory places it, with exactly the inventory's
+                        sha256 and size (a file of another content is refused even
+                        with identical bytes)
+           and every object is present in the store with the pinned size (one
+           listing per RobotRun or content)
 revisions  one transaction, units in unit id order; each unit and revision
            inserted if absent (decide_revision_registration): identical → no-op ·
            new unit or new fingerprint → insert · same fingerprint, other
@@ -262,15 +268,14 @@ Everything downstream of registration reads canonical Scenes through a pin:
   ([Derived layer](./derived-layer.md) §2).
 - Scenario mining, detection and evaluation consume sample views and label
   sets through checksum-verified pins (`sceneops_derived`), locate
-  payloads through the payload locator (an ArtifactRecord, or a content
-  inventory entry), and refuse a view whose Scene revision blocked downstream
-  use. See [Derived layer](./derived-layer.md).
+  payloads by their Logical URIs through the verified payload reader, and
+  refuse a view whose Scene revision blocked downstream use. See [Derived layer](./derived-layer.md).
 - `EXPORT_ANALYTICS_SNAPSHOT` writes `scenes`, `observations` and `keyframes`
   tables from the verified revisions the DatasetVersion pins. Every timestamp
-  column is paired with its `source_clock`; observations carry
-  `payload_artifact_id`, not a location. A Scene whose observations reference
-  preserved source files is refused explicitly (`UnsupportedSceneContentError`):
-  every table is built before any is written, so a refused export writes no table.
+  column is paired with its `source_clock`; observations carry their payload
+  reference (`payload_uri`, checksum, size, media type and `payload_selector` as
+  canonical JSON), the same for every source, never a location. Every table is
+  built before any is written, so a failed export writes no table.
 
 ## 6. Producer: RecordingSceneBuilder
 
@@ -289,7 +294,7 @@ profile_scene            PROFILE_SCENE (optional; revisions from registration)
 ```
 
 The builder (`sceneops_scenes.recording_builder`, producer
-`sceneops.recording_scene_builder`, semantics version 5) reads the recording
+`sceneops.recording_scene_builder`, semantics version 6) reads the recording
 only through `resolve_recording(robot_run_id)`, requires it to pass the L1
 conformance suite, and reads messages through
 `sceneops_recording.reader`. Its behavior is a function of
@@ -342,11 +347,12 @@ segmentation   whole_recording { clock } | fixed_duration { clock, duration_ns }
   `application/x.ros2-cdr.sensor_msgs.msg.pointcloud2`).
   Each payload is a write-once `OBSERVATION_PAYLOAD` artifact at
   `{artifact_root}/observation_payloads/{robot_run_id}/{artifact_id}`, owned
-  by the RobotRun. Its id derives from (robot_run_id, topic, per-topic file
-  position, extraction), so rebuilds with other segmentation reuse it.
+  by the RobotRun, and the observation names it by the Logical URI of that key.
+  Its id derives from (robot_run_id, topic, per-topic file position,
+  extraction), so rebuilds with other segmentation reuse it.
 - **Calibration** comes from static transforms relative to the ego frame and
   from CameraInfo intrinsics. Both must be constant for the recording.
-  Distortion or rectification SceneManifest v4 cannot express fails the
+  Distortion or rectification the SceneManifest cannot express fails the
   build.
 - **Poses** are the configured source transforms at their own stamps,
   without interpolation or per-observation association.
@@ -382,7 +388,7 @@ depends only on its own scene, so a subset builds the same revisions, and an
 unknown key fails. DatasetVersion fields are rejected.
 
 The builder (`sceneops_scenes.nuscenes_builder`, producer
-`sceneops.nuscenes_scene_builder`, semantics version 1) reads the content only
+`sceneops.nuscenes_scene_builder`, semantics version 2) reads the content only
 through the native reader `sceneops_sources.nuscenes`, which parses the nuScenes
 v1.0 tables (`scene`, `sample`, `sample_data`, `ego_pose`, `calibrated_sensor`,
 `sensor` of the one `v1.0-<split>` table directory) through verified content
@@ -410,8 +416,9 @@ calibrations   cal-<calibrated_sensor.token> per calibration a reading reference
                camera_intrinsic for a camera, none for lidar / radar
 ego poses      pose-<ego_pose.token> per reading: global → ego at ego_pose.timestamp
 observations   <channel>-<rank, 8 digits>, rank in (timestamp, token) order per channel;
-               payload = SourceFileRef of the reading's preserved file with the
-               inventory's sha256 and size; calibration_id and ego_pose_id from the
+               payload = PayloadRef of the reading's preserved file in place
+               (sources Logical URI, the inventory's sha256 and size);
+               calibration_id and ego_pose_id from the
                reading's own tokens; image size for a camera;
                native_ref = sample_data.token
 media types    from the modality, the file suffix and the table's fileformat:

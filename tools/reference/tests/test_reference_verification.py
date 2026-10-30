@@ -425,7 +425,9 @@ class _FakePlatform:
             self.artifacts[artifact_id] = {**m["artifact"], "uri": uri}
             self.objects[uri] = m["bytes"].encode()
         for artifact_id, p in obs["payloads"].items():
-            uri = f"s3://b/p/{artifact_id}"
+            # Where the recording builders store a payload: its key
+            # <robot_run_id>/<id> under the payload root.
+            uri = f"s3://b/observation_payloads/{p['artifact']['owner_id']}/{artifact_id}"
             self.artifacts[artifact_id] = {**p["artifact"], "uri": uri}
             self.objects[uri] = b"x" * p["artifact"]["size_bytes"]
 

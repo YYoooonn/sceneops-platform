@@ -45,6 +45,12 @@ REPLAY = PinnedRecording(
 )
 
 
+def _payload_id(ref) -> str:
+    """The payload artifact id a recording payload's Logical URI names
+    (``{robot_run_id}/{artifact_id}``)."""
+    return ref.logical_uri().key.rpartition("/")[2]
+
+
 def _plan(path, revision, config=None):
     return plan_recording_scenes(
         path,
@@ -61,7 +67,7 @@ def _bytes_by_observation(path, plan, config=None):
     cfg = RecordingSceneBuildConfig.model_validate(config or build_config())
     data = {p.artifact_id: b for p, b in iter_planned_payloads(path, plan, cfg)}
     return {
-        o.observation_id: data[o.payload.artifact_id]
+        o.observation_id: data[_payload_id(o.payload)]
         for s in plan.scenes
         for o in s.manifest.observations
     }
@@ -166,7 +172,7 @@ def test_duplicate_occurrences_keep_distinct_identities(tmp_path):
     ]
     assert len(duplicates) == 2
     assert len({o.observation_id for o in duplicates}) == 2
-    assert len({o.payload.artifact_id for o in duplicates}) == 2
+    assert len({_payload_id(o.payload) for o in duplicates}) == 2
     assert len({o.payload.checksum for o in duplicates}) == 1
 
 

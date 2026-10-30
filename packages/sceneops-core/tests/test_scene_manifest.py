@@ -1,4 +1,4 @@
-"""SceneManifest v3 contract: canonical bytes, strict parsing, source
+"""SceneManifest contract: canonical bytes, strict parsing, source
 fidelity invariants and record projection (ADR-007 §13.5-§13.8, §19,
 I-1/I-3/I-21-I-24/I-26)."""
 
@@ -9,11 +9,11 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from sceneops_core.artifacts.schemas import ArtifactPayloadRef
+from sceneops_core.artifacts.schemas import PayloadRef
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.provenance import ProducerInfo, manifest_artifact_id_for
 from sceneops_core.scenes.schemas import (
-    SCENE_MANIFEST_SCHEMA_V4,
+    SCENE_MANIFEST_SCHEMA_V5,
     NonCanonicalSceneManifestError,
     SceneChannel,
     SceneCoordinateFrame,
@@ -64,7 +64,7 @@ def test_manifest_holds_no_membership_or_execution_state():
         "metadata",
     ):
         assert forbidden not in payload
-    assert payload["schema_version"] == SCENE_MANIFEST_SCHEMA_V4
+    assert payload["schema_version"] == SCENE_MANIFEST_SCHEMA_V5
 
 
 def test_non_canonical_bytes_are_rejected_even_when_semantically_equal():
@@ -137,41 +137,37 @@ def test_unsupported_schema_version_and_garbage_are_rejected():
 
 def _payload(**overrides):
     fields = dict(
-        artifact_id="art-payload-1",
+        uri="sceneops://observation-payloads/run-001/art-payload-1",
         checksum="sha256:" + "a" * 64,
         size_bytes=1,
         media_type="image/jpeg",
     )
     fields.update(overrides)
-    return ArtifactPayloadRef(**fields)
+    return PayloadRef(**fields)
 
 
-def test_payload_is_referenced_by_artifact_identity_not_location():
-    assert set(ArtifactPayloadRef.model_fields) == {
-        "kind",
-        "artifact_id",
+def test_payload_is_referenced_by_logical_uri_not_location():
+    assert set(PayloadRef.model_fields) == {
+        "uri",
         "checksum",
         "size_bytes",
         "media_type",
+        "selector",
     }
-    with pytest.raises(ValidationError):
-        _payload(uri="s3://b/x")
-    for bad_id in ("", "s3://b/x", "samples/CAM_FRONT/x.jpg", " art-1"):
+    for bad_uri in ("s3://b/x", "file:///x", "samples/CAM_FRONT/x.jpg", ""):
         with pytest.raises(ValidationError):
-            _payload(artifact_id=bad_id)
+            _payload(uri=bad_uri)
+    with pytest.raises(ValidationError):
+        _payload(artifact_id="art-payload-1")
 
 
 def test_payload_references_carry_no_storage_location():
     payload = _dump(build_scene_manifest())
     for observation in payload["observations"]:
-        assert observation["payload"]["kind"] == "artifact"
-        assert set(observation["payload"]) == {
-            "kind",
-            "artifact_id",
-            "checksum",
-            "size_bytes",
-            "media_type",
-        }
+        assert set(observation["payload"]) == set(PayloadRef.model_fields)
+        assert observation["payload"]["uri"].startswith(
+            "sceneops://observation-payloads/run-001/"
+        )
 
 
 @pytest.mark.parametrize(
@@ -182,11 +178,11 @@ def test_payload_media_type_is_a_canonical_type_subtype(media_type):
         _payload(media_type=media_type)
 
 
-def test_payload_requires_checksum_and_positive_size():
+def test_payload_requires_checksum_and_non_negative_size():
     with pytest.raises(ValidationError):
         _payload(checksum="md5:abc")
     with pytest.raises(ValidationError):
-        _payload(size_bytes=0)
+        _payload(size_bytes=-1)
 
 
 def test_timestamps_are_integer_nanoseconds():

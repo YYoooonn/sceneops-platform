@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from sceneops_core.artifacts.logical_uri import LogicalNamespace, format_logical_uri
 from sceneops_core.episodes.lerobot_build import LeRobotEpisodeBuildConfig
 from sceneops_core.episodes.recording_build import EpisodeStreamRole
 from sceneops_core.episodes.schemas import load_canonical_episode_manifest
@@ -119,21 +120,26 @@ def test_videos_are_frame_selectors_into_the_preserved_file(tmp_path):
     write_lerobot_tree(tmp_path, lengths=(3, 2))
     plan = _plan(tmp_path)
     video = (tmp_path / VIDEO_PATH).read_bytes()
+    content_id = plan.episodes[1].manifest.lineage.source.content_id
     refs = [o.payload for o in plan.episodes[1].manifest.observations]
-    assert {(r.kind, r.path, r.media_type, r.size_bytes, r.sha256) for r in refs} == {
+    # The preserved file in place, by its sources Logical URI: nothing copied.
+    assert {(r.uri, r.media_type, r.size_bytes, r.checksum) for r in refs} == {
         (
-            "source_file",
-            VIDEO_PATH,
+            format_logical_uri(
+                LogicalNamespace.SOURCES, f"contents/{content_id}/files/{VIDEO_PATH}"
+            ),
             "video/mp4",
             len(video),
             "sha256:" + hashlib.sha256(video).hexdigest(),
         )
     }
-    # Episode 1 starts at from_timestamp = 3 / 10 in the shared video.
+    # Episode 1 starts at from_timestamp = 3 / 10 in the shared video; the
+    # selector is the frame's time in the video's own time base.
     start = Fraction(0.3)
-    assert [r.frame.timestamp_ns for r in refs] == [
+    assert [r.selector.timestamp_ns for r in refs] == [
         round((start + Fraction(k, 10)) * 10**9) for k in range(2)
     ]
+    assert {r.selector.kind for r in refs} == {"video_frame"}
     assert plan.payloads == {}
 
 
@@ -319,7 +325,29 @@ def test_pusht_episode_zero_and_one(pusht_plan):
     for topic in ("observation.state", "action"):
         assert first.stream(topic).fields[0].component_names == ["motor_0", "motor_1"]
     second_video = pusht_plan.episodes[1].manifest.observations[0].payload
-    assert second_video.path == "videos/observation.image/chunk-000/file-000.mp4"
-    assert second_video.sha256.startswith("sha256:f58d1185")
+    assert second_video.logical_uri().key.endswith(
+        "/files/videos/observation.image/chunk-000/file-000.mp4"
+    )
+    assert second_video.checksum.startswith("sha256:f58d1185")
     assert second_video.media_type == "video/mp4"
-    assert second_video.frame.timestamp_ns == 16_100_000_000
+    assert second_video.selector.timestamp_ns == 16_100_000_000
+
+
+def test_the_builder_emits_episode_manifest_v4_with_video_frame_selectors(tmp_path):
+    """The emitted schema version moves only with the builder's semantics
+    version (ADR-017)."""
+    from sceneops_core.artifacts.schemas import PayloadRef
+    from sceneops_core.episodes.schemas import EPISODE_MANIFEST_SCHEMA_V4
+    from sceneops_episodes.lerobot_builder import LEROBOT_EPISODE_SEMANTICS_VERSION
+
+    write_lerobot_tree(tmp_path)
+    manifest = _plan(tmp_path).episodes[0].manifest
+    assert manifest.schema_version == EPISODE_MANIFEST_SCHEMA_V4
+    assert (
+        manifest.lineage.producer.semantics_version
+        == (LEROBOT_EPISODE_SEMANTICS_VERSION)
+        == 2
+    )
+    payloads = [o.payload for o in manifest.occurrences() if o.payload is not None]
+    assert {type(p) for p in payloads} == {PayloadRef}
+    assert all(p.selector is not None for p in payloads)

@@ -2,9 +2,13 @@
 
 ``load_detection_samples`` is the only way a detection run turns derived
 inputs into samples: every view and every Scene revision it names is read
-through its pinned checksum, every payload through the payload locator (its
-verified ArtifactRecord, or its registered content's inventory), and nothing
-is looked up by location or "latest".
+through its pinned checksum, and nothing is looked up by location or "latest".
+Each payload travels as the Scene's own ``PayloadRef`` (Logical URI, sha256,
+size), whatever the source: the lidar payload is read by the backend through
+the verified payload reader, and the camera payload is handed to the inference
+server as a location plus the sha256 and size the server verifies before
+decoding. Both decode whole objects, so a reference that selects part of one
+(a video frame) is refused.
 """
 
 from __future__ import annotations
@@ -18,8 +22,7 @@ from sceneops_core.sample_views import SceneSampleResolver, SceneSampleViewManif
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.resolution import ResolvedView, resolve_label_set
 from sceneops_inference.detection.base import DetectionSampleInput
-from sceneops_inference.detection.uris import normalize_image_uri
-from sceneops_worker.payloads import PayloadLocator
+from sceneops_worker.payloads import require_whole_payloads
 
 
 class SampleViewResolutionError(ValueError):
@@ -51,7 +54,6 @@ async def load_detection_samples(
     none of its samples is an error, never an empty result.
     """
     selection = DetectionSampleSelection()
-    locator = PayloadLocator(context)
     label_cache: dict[str, LabelSetManifest] = {}
 
     async def labels_of(
@@ -127,7 +129,7 @@ async def load_detection_samples(
                 for r in rs
                 if (m := r.member(lidar_channel)) is not None
             ]
-        uris = await locator.uris(refs)
+        require_whole_payloads(refs, consumer="detection")
 
         for sample, r in zip(with_camera, rs):
             camera = r.member(camera_channel)
@@ -138,11 +140,11 @@ async def load_detection_samples(
                     scene_id=view.scene.scene_id,
                     sample_id=sample.sample_id,
                     camera_channel=camera_channel,
-                    image_uri=normalize_image_uri(uris[camera.observation.payload]),
+                    camera_payload=camera.observation.payload,
                     camera=camera,
                     lidar=lidar,
-                    lidar_uri=(
-                        uris[lidar.observation.payload] if lidar is not None else None
+                    lidar_payload=(
+                        lidar.observation.payload if lidar is not None else None
                     ),
                     pose=r.pose,
                     reference_labels=(

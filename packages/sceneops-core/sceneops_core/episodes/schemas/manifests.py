@@ -1,5 +1,5 @@
-"""EpisodeManifest v3 -- the canonical, source-faithful description of one
-Episode (ADR-007 §13.10, §31; ADR-015 §6.6).
+"""EpisodeManifest -- the canonical, source-faithful description of one
+Episode (ADR-007 §13.10, §31; ADR-015 §6.6; ADR-017).
 
 An Episode is a task / behavior-oriented projection of one source unit: a
 window of a registered RobotRun recording (``RecordingSegmentSource``) or
@@ -38,7 +38,11 @@ Every clock the window, the frame timeline or a stream names is declared
 exactly once in ``clock_domains`` with its origin (ADR-015 §6.2), and every
 declared clock is used.
 
-Representation conventions fixed by ``sceneops.episode_manifest/v3``:
+Payloads are referenced by Logical URI and integrity (``PayloadRef``), the
+same way for every source. The schema version is
+``sceneops.episode_manifest/v4``.
+
+Representation conventions:
 
     time       integer nanoseconds in a declared clock domain, one clock per
                stream; on a frame timeline, round_half_even(k · 10⁹ / fps)
@@ -47,9 +51,9 @@ Representation conventions fixed by ``sceneops.episode_manifest/v3``:
                as decoded from the source (a float32 as its exact float64
                widening); a field with component_names holds lists of exactly
                that length
-    payloads   referenced by artifact identity (ArtifactPayloadRef) or by
-               preserved file of the unit's own content (SourceFileRef), with
-               integrity, never by location
+    payloads   referenced with integrity, never by storage location; a
+               video frame by its presentation time in the video's own
+               time base, never by a canonical timestamp
     native_ref the source's own identifier of an occurrence, verbatim
 
 All bytes go through :meth:`EpisodeManifest.to_canonical_bytes` and
@@ -78,7 +82,7 @@ from pydantic import (
     model_validator,
 )
 
-from sceneops_core.artifacts.schemas.payload import PayloadRef, SourceFileRef
+from sceneops_core.artifacts.schemas.payload import PayloadRef
 from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.common.identifiers import (
@@ -101,7 +105,7 @@ from sceneops_core.provenance import (
 
 from ..recording_build import EpisodeStreamRole, FieldPath
 
-EPISODE_MANIFEST_SCHEMA_V3: Final = "sceneops.episode_manifest/v3"
+EPISODE_MANIFEST_SCHEMA_V4: Final = "sceneops.episode_manifest/v4"
 
 
 class EpisodeManifestError(ValueError):
@@ -255,7 +259,9 @@ _ROLE_LISTS: Final = {
 
 
 class EpisodeManifest(_ManifestModel):
-    schema_version: Literal["sceneops.episode_manifest/v3"] = EPISODE_MANIFEST_SCHEMA_V3
+    # A new version changes every builder's output bytes, so it moves only
+    # together with every Episode builder's semantics version (ADR-017).
+    schema_version: Literal["sceneops.episode_manifest/v4"] = EPISODE_MANIFEST_SCHEMA_V4
     lineage: EpisodeLineage
     clock_domains: list[ClockDomain] = Field(min_length=1)
     frame_timeline: FrameTimeline | None = None
@@ -317,28 +323,8 @@ class EpisodeManifest(_ManifestModel):
             timestamps=self.clocked_timestamps(),
         )
         self._check_source_window()
-        self._check_source_files()
         self._check_frame_timeline()
         return self
-
-    def _check_source_files(self) -> None:
-        """A preserved-file reference names a file of the unit's own content:
-        a unit reads one source, so a reference to any other content (or from
-        a recording-sourced unit) is a wrong binding."""
-        source = self.lineage.source
-        for occurrence in self.occurrences():
-            payload = occurrence.payload
-            if not isinstance(payload, SourceFileRef):
-                continue
-            if (
-                source.source_kind != "content"
-                or payload.content_id != source.content_id
-            ):
-                raise ValueError(
-                    f"{occurrence.occurrence_id!r} references a file of "
-                    f"{payload.content_id}, not of the Episode's own source "
-                    f"{source.source_id}"
-                )
 
     def _check_frame_timeline(self) -> None:
         """With a frame timeline: its clock is the window's and has origin
@@ -479,8 +465,8 @@ def _check_component_lengths(
 
 
 def load_canonical_episode_manifest(data: bytes) -> EpisodeManifest:
-    """Strictly parse manifest bytes and require them to be canonical:
-    ``canonical(parse(data)) == data``."""
+    """Strictly parse manifest bytes of the current schema version and require
+    them to be canonical: ``canonical(parse(data)) == data``."""
     try:
         payload = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -488,7 +474,7 @@ def load_canonical_episode_manifest(data: bytes) -> EpisodeManifest:
     if not isinstance(payload, dict):
         raise EpisodeManifestError("manifest must be a JSON object")
     schema_version = payload.get("schema_version")
-    if schema_version != EPISODE_MANIFEST_SCHEMA_V3:
+    if schema_version != EPISODE_MANIFEST_SCHEMA_V4:
         raise UnsupportedEpisodeManifestVersionError(
             f"unsupported EpisodeManifest schema_version: {schema_version!r}"
         )
@@ -498,13 +484,13 @@ def load_canonical_episode_manifest(data: bytes) -> EpisodeManifest:
         raise EpisodeManifestError(f"invalid EpisodeManifest: {exc}") from exc
     if manifest.to_canonical_bytes() != data:
         raise NonCanonicalEpisodeManifestError(
-            "manifest bytes are not in canonical EpisodeManifest v3 form"
+            f"manifest bytes are not in canonical {schema_version} form"
         )
     return manifest
 
 
 __all__ = [
-    "EPISODE_MANIFEST_SCHEMA_V3",
+    "EPISODE_MANIFEST_SCHEMA_V4",
     "EpisodeField",
     "EpisodeLineage",
     "EpisodeManifest",

@@ -16,6 +16,14 @@ SceneOps package: a formula that disagrees with the platform is a finding
                             ingress-boundaries.md §4
     recording_artifact_id   ingress-boundaries.md §4
     composition_checksum    data-model.md §2.1
+    Logical URI             ADR-016: sceneops://<namespace>/<key>, each key segment
+                            percent-encoded over its UTF-8 bytes, every byte outside
+                            A-Z a-z 0-9 - . _ ~ as uppercase %XX; one spelling per
+                            key
+    payload keys            storage-layout.md: a recording payload at
+                            <robot_run_id>/<payload artifact id> in
+                            observation-payloads, a preserved file at
+                            contents/<content_id>/files/<path> in sources
 """
 
 from __future__ import annotations
@@ -27,6 +35,16 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+OBSERVATION_PAYLOADS = "observation-payloads"
+SOURCES = "sources"
+# The fields of a payload reference (ADR-017): Logical URI, full-object
+# integrity, media type and an optional selector; nothing else.
+PAYLOAD_REF_FIELDS = frozenset({"uri", "checksum", "size_bytes", "media_type", "selector"})
+_UNRESERVED = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+)
+_HEX = frozenset("0123456789ABCDEF")
 
 UNIT_ID_SCHEMA = "sceneops.unit_id/v2"
 RECORDING_SEGMENTATION_SCHEMA = "sceneops.recording_segmentation/v1"
@@ -132,3 +150,81 @@ def digest(items: Iterable[Any]) -> str:
     """A checksum over an ordered list of JSON values: how an expectation
     pins a long sequence (timestamps, payload checksums) in a small file."""
     return checksum(canonical_json(list(items)))
+
+
+def _encode_segment(segment: str) -> str:
+    return "".join(
+        chr(b) if chr(b) in _UNRESERVED else f"%{b:02X}"
+        for b in segment.encode("utf-8")
+    )
+
+
+def _decode_segment(encoded: str) -> str | None:
+    out = bytearray()
+    i = 0
+    while i < len(encoded):
+        if encoded[i] == "%":
+            pair = encoded[i + 1 : i + 3]
+            if len(pair) != 2 or not set(pair) <= _HEX:
+                return None
+            out.append(int(pair, 16))
+            i += 3
+        elif encoded[i] in _UNRESERVED:
+            out.append(ord(encoded[i]))
+            i += 1
+        else:
+            return None
+    try:
+        segment = out.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if "/" in segment or _encode_segment(segment) != encoded:
+        return None
+    return segment
+
+
+def logical_uri(namespace: str, key: str) -> str:
+    """The one spelling of ``key`` in ``namespace``."""
+    segments = key.split("/")
+    if any(s in ("", ".", "..") for s in segments):
+        raise ValueError(f"{key!r} is not an object key")
+    return f"sceneops://{namespace}/" + "/".join(_encode_segment(s) for s in segments)
+
+
+def logical_key(uri: Any, namespace: str) -> str | None:
+    """The key a canonical Logical URI in ``namespace`` names, or None when
+    ``uri`` is anything else (another namespace, another spelling)."""
+    prefix = f"sceneops://{namespace}/"
+    if not isinstance(uri, str) or not uri.startswith(prefix):
+        return None
+    segments = [_decode_segment(s) for s in uri[len(prefix) :].split("/")]
+    if any(s is None or s in ("", ".", "..") for s in segments):
+        return None
+    return "/".join(segments)  # type: ignore[arg-type]
+
+
+def observation_payload_uri(robot_run_id: str, payload_artifact_id: str) -> str:
+    return logical_uri(OBSERVATION_PAYLOADS, f"{robot_run_id}/{payload_artifact_id}")
+
+
+def content_file_uri(content_id: str, path: str) -> str:
+    return logical_uri(SOURCES, f"contents/{content_id}/files/{path}")
+
+
+def payload_artifact_id_of(ref: Any) -> str | None:
+    """The payload artifact id a recording payload reference's URI names
+    (``<robot_run_id>/<id>``), or None when it names no such key."""
+    key = logical_key((ref or {}).get("uri"), OBSERVATION_PAYLOADS)
+    if key is None or key.count("/") != 1:
+        return None
+    return key.partition("/")[2]
+
+
+def content_file_path_of(ref: Any, content_id: str) -> str | None:
+    """The inventory path a payload reference's URI names as a preserved file
+    of ``content_id``, or None when it names no such file."""
+    key = logical_key((ref or {}).get("uri"), SOURCES)
+    prefix = f"contents/{content_id}/files/"
+    if key is None or not key.startswith(prefix):
+        return None
+    return key[len(prefix) :]

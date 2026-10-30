@@ -137,6 +137,16 @@ def test_a_synthetic_composition_passes_and_every_control_is_detected(small, wit
     assert ("selector_clause" in {r["control"] for r in results}) is with_selector
 
 
+def test_a_version_name_that_is_also_a_manifest_key_is_not_membership(small):
+    """The LeRobot Episodes' PayloadRefs carry a "selector" key; a version named
+    `selector` is not written into them. The name as a value still is."""
+    obs = mixed_source.synthetic_observation(small, dataset_key="ds/selector", with_selector=True)
+    assert any('"selector":' in e["bytes"] for e in obs["manifests"].values())
+    assert _verify(obs, small).violations == []
+    results = mixed_source.run_controls(obs, lambda corrupted: _verify(corrupted, small).codes())
+    assert [r["control"] for r in results if not r["detected"]] == []
+
+
 def test_the_composition_must_name_every_part(small):
     """A version of the content parts only is not the mixed composition."""
     obs = mixed_source.synthetic_observation(small, dataset_key="ds/mixed", with_selector=False)

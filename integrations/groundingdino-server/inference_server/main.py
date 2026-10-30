@@ -13,7 +13,11 @@ from fastapi.responses import JSONResponse
 from inference_server.config import InferenceServerSettings, get_settings
 from inference_server.storage import build_s3_client
 from inference_server.grounding_dino import GroundingDinoModel
-from inference_server.image_resolver import ImageResolver
+from inference_server.image_resolver import (
+    ImageDecodeError,
+    ImageIntegrityError,
+    ImageResolver,
+)
 from inference_server.schemas import (
     DetectRequest,
     DetectResponse,
@@ -121,6 +125,22 @@ async def lifespan(app: FastAPI):
     _concurrency = None
 
 
+# Image error codes (``detail.code`` of a 4xx /v1/detect response). The model is
+# never invoked for any of them; clients tell integrity failures (not_found,
+# integrity_mismatch) apart from undecodable images and from model errors (5xx).
+IMAGE_NOT_FOUND = "image_not_found"
+IMAGE_INTEGRITY_MISMATCH = "image_integrity_mismatch"
+IMAGE_ACCESS_DENIED = "image_access_denied"
+IMAGE_DECODE_FAILED = "image_decode_failed"
+INVALID_IMAGE_URI = "invalid_image_uri"
+
+
+def _image_error(status_code: int, code: str, exc: Exception) -> HTTPException:
+    return HTTPException(
+        status_code=status_code, detail={"code": code, "message": str(exc)}
+    )
+
+
 app = FastAPI(
     title="SceneOps Inference Server",
     description="GroundingDINO-T 2D detection endpoint for the SceneOps auto-label pipeline.",
@@ -224,42 +244,67 @@ async def detect(request: DetectRequest) -> DetectResponse:
             _concurrency.max_requests,
         )
         try:
-
-            def _run() -> tuple:
-                image = resolver.resolve(request.image_uri)
-                return model.detect_image(
+            # Only resolution errors are image errors: they are mapped here,
+            # before the model runs. Model failures propagate (500).
+            try:
+                image = await asyncio.to_thread(
+                    functools.partial(
+                        resolver.resolve,
+                        request.image_uri,
+                        checksum=request.image_checksum,
+                        size_bytes=request.image_size_bytes,
+                    )
+                )
+            except FileNotFoundError as exc:
+                logger.warning(
+                    "Image not found uri=%r trace_id=%r: %s",
+                    request.image_uri,
+                    request.trace_id,
+                    exc,
+                )
+                raise _image_error(422, IMAGE_NOT_FOUND, exc) from exc
+            except ImageIntegrityError as exc:
+                logger.warning(
+                    "Image does not match its pin uri=%r trace_id=%r: %s",
+                    request.image_uri,
+                    request.trace_id,
+                    exc,
+                )
+                raise _image_error(422, IMAGE_INTEGRITY_MISMATCH, exc) from exc
+            except PermissionError as exc:
+                logger.warning(
+                    "Image outside allowed roots uri=%r trace_id=%r: %s",
+                    request.image_uri,
+                    request.trace_id,
+                    exc,
+                )
+                raise _image_error(403, IMAGE_ACCESS_DENIED, exc) from exc
+            except ImageDecodeError as exc:
+                logger.warning(
+                    "Image not decodable uri=%r trace_id=%r: %s",
+                    request.image_uri,
+                    request.trace_id,
+                    exc,
+                )
+                raise _image_error(422, IMAGE_DECODE_FAILED, exc) from exc
+            except ValueError as exc:
+                logger.warning(
+                    "Invalid image URI uri=%r trace_id=%r: %s",
+                    request.image_uri,
+                    request.trace_id,
+                    exc,
+                )
+                raise _image_error(422, INVALID_IMAGE_URI, exc) from exc
+            detections, inference_ms = await asyncio.to_thread(
+                functools.partial(
+                    model.detect_image,
                     image,
                     prompt=request.prompt,
                     box_threshold=box_threshold,
                     text_threshold=text_threshold,
                     max_image_size=max_image_size,
                 )
-
-            detections, inference_ms = await asyncio.to_thread(_run)
-        except FileNotFoundError as exc:
-            logger.warning(
-                "Image not found uri=%r trace_id=%r: %s",
-                request.image_uri,
-                request.trace_id,
-                exc,
             )
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except PermissionError as exc:
-            logger.warning(
-                "Image outside allowed roots uri=%r trace_id=%r: %s",
-                request.image_uri,
-                request.trace_id,
-                exc,
-            )
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
-        except ValueError as exc:
-            logger.warning(
-                "Invalid image URI uri=%r trace_id=%r: %s",
-                request.image_uri,
-                request.trace_id,
-                exc,
-            )
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
         finally:
             _concurrency.active_requests -= 1
 

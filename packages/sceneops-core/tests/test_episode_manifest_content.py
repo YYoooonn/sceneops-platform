@@ -1,6 +1,7 @@
-"""EpisodeManifest v3: content bindings, frame timeline, component names,
-transition streams, preserved-file payloads and native references (ADR-015
-§6.2, §6.5, §6.6; M3.0 D8, D9). Plus the frame-time rule they rest on."""
+"""EpisodeManifest v4: content bindings, frame timeline, component names,
+transition streams, video-frame payloads and native references (ADR-015
+§6.2, §6.5, §6.6; ADR-017; M3.0 D8, D9). Plus the frame-time rule they rest
+on."""
 
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from sceneops_core.artifacts.logical_uri import LogicalNamespace, format_logical_uri
 from sceneops_core.episodes.lerobot_build import LeRobotEpisodeBuildConfig
 from sceneops_core.episodes.schemas import (
     EpisodeManifest,
@@ -33,6 +35,9 @@ CONTENT_ID = content_id_for(CHECKSUM)
 OTHER_CONTENT_ID = content_id_for("sha256:" + "d" * 64)
 CLOCK = "lerobot.frame_time"
 VIDEO = "videos/observation.image/chunk-000/file-000.mp4"
+VIDEO_URI = format_logical_uri(
+    LogicalNamespace.SOURCES, f"contents/{CONTENT_ID}/files/{VIDEO}"
+)
 
 
 # --- frame time ------------------------------------------------------------------
@@ -116,15 +121,13 @@ def _document(
         source=source.source_revision(),
     )
     payload = {
-        "kind": "source_file",
-        "content_id": CONTENT_ID,
-        "path": VIDEO,
-        "sha256": "sha256:" + "e" * 64,
+        "uri": VIDEO_URI,
+        "checksum": "sha256:" + "e" * 64,
         "size_bytes": 1000,
         "media_type": "video/mp4",
     }
     return {
-        "schema_version": "sceneops.episode_manifest/v3",
+        "schema_version": "sceneops.episode_manifest/v4",
         "lineage": {
             "source": source.model_dump(mode="json"),
             "producer": producer.model_dump(mode="json"),
@@ -168,7 +171,13 @@ def _document(
                 k,
                 fps,
                 {},
-                payload={**payload, "frame": {"timestamp_ns": frame_time_ns(k, fps)}},
+                payload={
+                    **payload,
+                    "selector": {
+                        "kind": "video_frame",
+                        "timestamp_ns": frame_time_ns(k, fps),
+                    },
+                },
             )
             for k in range(frames)
         ],
@@ -193,14 +202,18 @@ def test_a_content_sourced_frame_grid_episode_is_canonical():
     assert manifest.lineage.source.source_kind == "content"
     assert manifest.frame_timeline.window() == (0, 200_000_001)
     assert [o.native_ref for o in manifest.states] == ["100", "101", "102"]
-    assert manifest.observations[2].payload.frame.timestamp_ns == 200_000_000
+    assert manifest.observations[2].payload.selector.timestamp_ns == 200_000_000
+    assert manifest.observations[2].payload.uri == VIDEO_URI
     instance = manifest.clock_instance(CLOCK)
     assert instance.scope == ("content", CONTENT_ID, "0")
 
 
-def test_v2_bytes_are_refused():
+@pytest.mark.parametrize(
+    "version", ["sceneops.episode_manifest/v2", "sceneops.episode_manifest/v3"]
+)
+def test_earlier_versions_are_refused(version):
     document = _document()
-    document["schema_version"] = "sceneops.episode_manifest/v2"
+    document["schema_version"] = version
     with pytest.raises(UnsupportedEpisodeManifestVersionError):
         load_canonical_episode_manifest(json.dumps(document).encode())
 
@@ -268,10 +281,20 @@ def test_transition_streams_need_a_frame_timeline():
     _invalid(document, "need a frame_timeline")
 
 
-def test_a_source_file_of_another_content_is_a_wrong_binding():
+def test_whose_bytes_a_uri_names_is_not_decided_by_the_schema():
+    """A file of another content validates here; registration refuses it
+    (sceneops_worker.payload_registration)."""
     document = _document()
-    document["observations"][0]["payload"]["content_id"] = OTHER_CONTENT_ID
-    _invalid(document, "not of the Episode's own source")
+    document["observations"][0]["payload"]["uri"] = VIDEO_URI.replace(
+        CONTENT_ID, OTHER_CONTENT_ID
+    )
+    assert EpisodeManifest.model_validate(document)
+
+
+def test_a_frame_selector_needs_a_video_payload():
+    document = _document()
+    document["observations"][0]["payload"]["media_type"] = "image/jpeg"
+    _invalid(document, "cannot select part of")
 
 
 def test_native_ref_is_a_verbatim_key():
@@ -280,7 +303,7 @@ def test_native_ref_is_a_verbatim_key():
     _invalid(document, "native_ref")
 
 
-def test_loader_reports_invalid_v3_documents():
+def test_loader_reports_invalid_documents():
     document = _document()
     document["frame_timeline"]["fps"] = 0
     with pytest.raises(EpisodeManifestError):
@@ -352,11 +375,12 @@ def test_snapshot_build_params_refuse_invalid_scope(overrides):
         parse_job_params(JobType.BUILD_SNAPSHOT_EPISODES, _snapshot_params(**overrides))
 
 
-# --- consumers that cannot resolve the new content refuse it (D14) -------------------
+# --- alignment (D14) ----------------------------------------------------------------
 
 
-def test_alignment_refuses_source_files_and_transition_streams():
+def test_alignment_refuses_transition_streams_and_carries_frame_references():
     from sceneops_core.episodes.alignment import (
+        ChannelNamespace,
         UnsupportedEpisodeContentError,
         alignment_samples,
     )
@@ -367,5 +391,11 @@ def test_alignment_refuses_source_files_and_transition_streams():
     document["streams"] = [s for s in document["streams"] if s["role"] != "transition"]
     document["transitions"] = []
     document["frame_timeline"] = None
-    with pytest.raises(UnsupportedEpisodeContentError, match="preserved source files"):
-        alignment_samples(EpisodeManifest.model_validate(document), CLOCK)
+    samples = alignment_samples(EpisodeManifest.model_validate(document), CLOCK)
+    frames = samples[ChannelNamespace.OBSERVATION]["observation.image"]
+    assert [s.payload.reference_uri for s in frames] == [VIDEO_URI] * 3
+    # The selector travels with the URI: without it the reference would name
+    # the whole video, not the frame.
+    assert [s.payload.reference_metadata["selector"] for s in frames] == [
+        {"kind": "video_frame", "timestamp_ns": frame_time_ns(k, 10)} for k in range(3)
+    ]

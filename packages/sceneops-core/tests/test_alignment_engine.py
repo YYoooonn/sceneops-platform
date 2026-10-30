@@ -162,8 +162,11 @@ def test_vector_fields_align_as_vectors_and_payloads_as_references() -> None:
     )
     ref = step.observations["/cam"].value
     assert ref.kind == AlignedValueKind.REFERENCE
-    assert ref.reference_metadata["artifact_id"].startswith("payload-")
+    assert ref.reference_uri.startswith("sceneops://observation-payloads/run-001/")
     assert ref.reference_metadata["media_type"] == "image/jpeg"
+    # The reference is carried whole: no artifact id, and no selector when the
+    # payload is the whole object.
+    assert set(ref.reference_metadata) == {"checksum", "size_bytes", "media_type"}
 
 
 def test_non_numeric_fields_and_event_streams_are_not_aligned() -> None:
@@ -194,7 +197,7 @@ def test_no_alignable_occurrence_has_no_bounds() -> None:
 
 def test_semantics_version_and_clock_are_recorded() -> None:
     aligned = _align([state("/odom", 0, x=0.0)])
-    assert aligned.alignment_semantics_version == ALIGNMENT_SEMANTICS_VERSION == "v2"
+    assert aligned.alignment_semantics_version == ALIGNMENT_SEMANTICS_VERSION == "v3"
     assert aligned.source_clock == DEFAULT_CLOCK
 
 

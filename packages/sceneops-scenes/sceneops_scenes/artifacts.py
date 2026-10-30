@@ -17,8 +17,10 @@ deterministic artifact id under the RobotRun they were extracted from::
 
     {payload_root}/{robot_run_id}/{artifact_id}
 
-Readers never derive this key: a manifest names a payload by artifact id
-and its OBSERVATION_PAYLOAD ArtifactRecord holds the URI.
+A manifest names a payload by the Logical URI of this key (ADR-016), which
+registration accepts only when the payload's OBSERVATION_PAYLOAD ArtifactRecord
+records exactly that location; readers resolve it with the configured payload
+root and verify the bytes.
 """
 
 from __future__ import annotations

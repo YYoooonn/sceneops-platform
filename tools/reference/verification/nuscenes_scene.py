@@ -26,8 +26,9 @@ calibrations   cal-<calibrated_sensor.token>: ego -> channel, translation and
                rotation [w, x, y, z] verbatim, camera_intrinsic for a camera only
 ego poses      pose-<ego_pose.token>: global -> ego at ego_pose.timestamp
 observations   <channel>-<rank:08d>, rank in (timestamp, token) order per channel;
-               SourceFileRef {content_id, filename, sha256, size, media type,
-               frame null}; media type camera .jpg image/jpeg, lidar .pcd.bin
+               PayloadRef {uri = sceneops://sources/contents/<content_id>/files/
+               <filename> (ADR-016 spelling), sha256, size, media type, selector
+               null}; media type camera .jpg image/jpeg, lidar .pcd.bin
                application/x.nuscenes.lidar-pcd-bin, radar .pcd
                application/x.nuscenes.radar-pcd                  §6.5, D3
                calibration_id / ego_pose_id from the reading's own tokens, image
@@ -35,7 +36,7 @@ observations   <channel>-<rank:08d>, rank in (timestamp, token) order per channe
 keyframes      keyframe-<rank:06d> per sample in (timestamp, token) order, at
                sample.timestamp, the key-frame reading of each channel, native_ref
                = sample.token                                    §6.6
-producer       sceneops.nuscenes_scene_builder v1; fingerprint over the normalized
+producer       sceneops.nuscenes_scene_builder v2; fingerprint over the normalized
                build configuration {channels sorted} and {source_kind: content,
                content_id, content_checksum}                     ADR-007 §15.2
 ```
@@ -60,12 +61,12 @@ from . import rules
 from .findings import Findings
 from .nuscenes_source import file_sha256
 
-MANIFEST_SCHEMA = "sceneops.scene_manifest/v4"
+MANIFEST_SCHEMA = "sceneops.scene_manifest/v5"
 CONTENT_ID_SCHEMA = "sceneops.content_id/v1"
 CLOCK = "nuscenes.timestamp"
 CLOCK_DOMAINS = [{"clock": CLOCK, "origin": "unix_epoch", "resolution_ns": 1000}]
 PRODUCER_ID = "sceneops.nuscenes_scene_builder"
-SEMANTICS_VERSION = 1
+SEMANTICS_VERSION = 2
 WORLD, EGO = "global", "ego"
 MEDIA = {
     "camera": (".jpg", "jpg", "image/jpeg"),
@@ -283,13 +284,11 @@ def derive(
                         "channel": channel,
                         "timestamp_ns": r["timestamp"] * 1000,
                         "payload": {
-                            "kind": "source_file",
-                            "content_id": content_id,
-                            "path": r["filename"],
-                            "sha256": entry["sha256"],
+                            "uri": rules.content_file_uri(content_id, r["filename"]),
+                            "checksum": entry["sha256"],
                             "size_bytes": entry["size_bytes"],
                             "media_type": MEDIA[modality][2],
-                            "frame": None,
+                            "selector": None,
                         },
                         "calibration_id": f"cal-{cs['token']}",
                         "ego_pose_id": f"pose-{pose['token']}",
@@ -397,11 +396,13 @@ def empty_observation() -> dict[str, Any]:
 
 
 def _referenced_paths(manifest: dict[str, Any]) -> set[str]:
-    return {
-        o["payload"]["path"]
+    """The preserved files of the Scene's own content its payloads name."""
+    content_id = manifest.get("lineage", {}).get("source", {}).get("content_id")
+    paths = (
+        rules.content_file_path_of(o.get("payload"), content_id)
         for o in manifest.get("observations", [])
-        if (o.get("payload") or {}).get("kind") == "source_file"
-    }
+    )
+    return {p for p in paths if p is not None}
 
 
 def collect(
@@ -553,7 +554,8 @@ def synthetic_observation(
             }
         )
         for o in unit.manifest["observations"]:
-            obs["content_objects"][o["payload"]["path"]] = o["payload"]["size_bytes"]
+            path = rules.content_file_path_of(o["payload"], raw.content_id)
+            obs["content_objects"][path] = o["payload"]["size_bytes"]
     if dataset_key:
         obs["dataset_version"] = {
             "key": dataset_key,
@@ -846,7 +848,7 @@ def _swap_sensor_files(manifest: dict[str, Any]) -> None:
 
 
 def _file_checksum(manifest: dict[str, Any]) -> None:
-    _of(manifest, "lidar")[0]["payload"]["sha256"] = rules.checksum(b"another point cloud")
+    _of(manifest, "lidar")[0]["payload"]["checksum"] = rules.checksum(b"another point cloud")
 
 
 def _media_type(manifest: dict[str, Any]) -> None:
@@ -885,9 +887,11 @@ def _content_binding(manifest: dict[str, Any]) -> None:
     other_id = "content-" + rules.sha256_hex(
         rules.canonical_json({"content_id_schema": CONTENT_ID_SCHEMA, "content_checksum": other_checksum})
     )[:32]
+    own_id = manifest["lineage"]["source"]["content_id"]
     manifest["lineage"]["source"].update(content_id=other_id, content_checksum=other_checksum)
     for o in manifest["observations"]:
-        o["payload"]["content_id"] = other_id
+        path = rules.content_file_path_of(o["payload"], own_id)
+        o["payload"]["uri"] = rules.content_file_uri(other_id, path)
     _refingerprint(manifest)
 
 
@@ -915,7 +919,7 @@ def controls() -> list[Control]:
                 frozenset({"scene_observations"}), on_manifest(_drop)),
         Control("sensor_file_swap", "two sensors' files of one sample exchanged",
                 frozenset({"source_file_ref"}), on_manifest(_swap_sensor_files)),
-        Control("source_file_checksum", "a lidar SourceFileRef sha256 of other bytes",
+        Control("source_file_checksum", "a lidar payload reference pins the sha256 of other bytes",
                 frozenset({"source_file_ref"}), on_manifest(_file_checksum)),
         Control("media_type", "lidar files declared radar point clouds",
                 frozenset({"source_file_ref"}), on_manifest(_media_type)),

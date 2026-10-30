@@ -357,7 +357,7 @@ def test_camera_and_lidar_agree_with_the_robot_run_scene(api: Api, baseline_run:
 
     def rows(manifest: dict, channel: str, *, checksum: bool) -> list:
         return [
-            (o["timestamp_ns"], o["payload"]["checksum" if o["payload"]["kind"] == "artifact" else "sha256"])
+            (o["timestamp_ns"], o["payload"]["checksum"])
             if checksum
             else o["timestamp_ns"]
             for o in manifest["observations"]

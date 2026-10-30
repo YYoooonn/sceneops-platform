@@ -33,8 +33,8 @@ unit_identity         the unit record's binding is the expected source and unit
 manifest_checksum     the stored bytes hash to the pin, the record agrees, and a
                       content member's bytes are exactly the derived manifest
 manifest_canonical    canonical JSON
-manifest_forbidden_field  no membership, location or snapshot field or token in
-                      the bytes, including the DatasetVersion's own names
+manifest_forbidden_field  no membership, location or snapshot field, and no string
+                      value naming the DatasetVersion's own dataset id or version
 <per-source codes>    recording members: the recording verifier's lineage and
                       manifest checks; content members: the content verifier's
                       manifest checks
@@ -57,7 +57,7 @@ from __future__ import annotations
 import copy
 import json
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -464,9 +464,11 @@ def verify(f: Findings, obs: dict[str, Any], expected: MixedExpectation) -> None
     by_unit = {m.get("unit_id"): m for m in members}
     f.equal(len(by_unit), len(members), "composition_members", "at most one member per unit")
     f.equal(sorted(by_unit), sorted(expected.members), "composition_members", "member units")
-    # Names that would make a manifest depend on its membership.
-    dataset_id, version_name = version["key"].split("/", 1)
-    forbidden_tokens = [json.dumps(dataset_id), json.dumps(version_name)]
+    # Names that would make a manifest depend on its membership. Compared with the
+    # manifest's string values, not its keys: keys are fixed by the schema, and a
+    # name may equal one (a version named `selector`, the key of a PayloadRef's
+    # VideoFrameSelector).
+    forbidden_names = version["key"].split("/", 1)
 
     for unit_id, member in sorted(by_unit.items()):
         exp = expected.members.get(unit_id)
@@ -516,7 +518,8 @@ def verify(f: Findings, obs: dict[str, Any], expected: MixedExpectation) -> None
             continue
         g.check(rules.canonical_json(manifest) == data, "manifest_canonical", "canonical bytes")
         bad = checks._forbidden_keys(manifest)
-        named = [t for t in forbidden_tokens if t in text]
+        values = set(_string_values(manifest))
+        named = [json.dumps(n) for n in forbidden_names if n in values]
         g.check(not bad and not named, "manifest_forbidden_field", f"the manifest carries {bad[:5]} {named}")
         exp.check(g, manifest, revision)
 
@@ -818,6 +821,17 @@ def _summary_channels(obs: dict[str, Any]) -> None:
 def _checksum_of_other_pins(obs: dict[str, Any]) -> None:
     pins = [(m["domain"], m["unit_id"], m["manifest_checksum"]) for m in obs["dataset_version"]["members"]][1:]
     obs["dataset_version"]["version"]["composition_checksum"] = rules.composition_checksum(pins)
+
+
+def _string_values(node: Any) -> Iterator[str]:
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from _string_values(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _string_values(value)
 
 
 def _selector_clause(obs: dict[str, Any]) -> None:

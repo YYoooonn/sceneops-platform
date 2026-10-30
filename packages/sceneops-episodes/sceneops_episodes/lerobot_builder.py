@@ -8,7 +8,7 @@ bytes, producer semantics and the normalized ``LeRobotEpisodeBuildConfig``
 (MS-4). It never reads a SourceSnapshot or its descriptor, writes nothing
 and plans no payload: images stay in the preserved videos.
 
-Canonical rules (frozen by ``semantics_version`` 1):
+Canonical rules (frozen by ``semantics_version`` 2):
 
     unit             one Episode per native episode; unit_key = str(episode_index)
     clock            lerobot.frame_time, origin unit, resolution 1 ns
@@ -22,9 +22,11 @@ Canonical rules (frozen by ``semantics_version`` 1):
                      exactly (float32 as its float64 widening), one field
                      ``value`` read from the feature column; a vector feature
                      declares its source names as component_names
-    video            an observation stream whose occurrences are SourceFileRefs
-                     (video/mp4) to the episode's video file, frame selector
-                     round_half_even((from_timestamp + k / fps) · 10⁹) with
+    video            an observation stream whose occurrences are PayloadRefs
+                     (video/mp4) to the episode's preserved video file in place
+                     (sources Logical URI, the inventory's sha256 and size), with
+                     a video_frame selector at
+                     round_half_even((from_timestamp + k / fps) · 10⁹),
                      from_timestamp its exact float64 value
     task events      stream ``task_index``: one event at every frame whose
                      task_index differs from the previous frame's (always frame
@@ -45,7 +47,7 @@ from collections.abc import Sequence
 from fractions import Fraction
 from typing import Any, Final
 
-from sceneops_core.artifacts.schemas import SourceFileRef, SourceFrame
+from sceneops_core.artifacts.schemas import PayloadRef, VideoFrameSelector
 from sceneops_core.episodes.lerobot_build import (
     LeRobotEpisodeBuildConfig,
     LeRobotFeatureSelection,
@@ -73,14 +75,16 @@ from sceneops_sources.lerobot import (
     LeRobotFormatError,
     read_lerobot_content,
 )
-from sceneops_sources import ContentFileError, ContentFiles
+from sceneops_sources import ContentFileError, ContentFiles, content_file_payload_ref
 
 from .plan import EpisodeBuildPlan, PlannedEpisode
 
 LEROBOT_EPISODE_PRODUCER_ID: Final = "sceneops.lerobot_episode_builder"
 # Bump whenever the canonical bytes a build produces change for the same
 # content and configuration (it enters the producer fingerprint).
-LEROBOT_EPISODE_SEMANTICS_VERSION: Final = 1
+# 2: EpisodeManifest v4 (a video frame is a PayloadRef by Logical URI with a
+# video_frame selector).
+LEROBOT_EPISODE_SEMANTICS_VERSION: Final = 2
 LEROBOT_FRAME_CLOCK: Final = "lerobot.frame_time"
 LEROBOT_FRAME_CLOCK_DOMAIN: Final = ClockDomain(
     clock=LEROBOT_FRAME_CLOCK, origin=ClockOrigin.UNIT, resolution_ns=1
@@ -245,7 +249,7 @@ def _select_episodes(
 
 def _video_ref(
     pinned: PinnedContent, episode: LeRobotEpisode, stream: _Stream
-) -> tuple[SourceFileRef, Fraction, Fraction]:
+) -> tuple[PayloadRef, Fraction, Fraction]:
     segment = episode.videos.get(stream.topic)
     if segment is None:
         raise LeRobotEpisodeBuildError(
@@ -257,12 +261,8 @@ def _video_ref(
             f"evidence for {VIDEO_MEDIA_TYPE} is a {VIDEO_SUFFIX} file"
         )
     entry = next(e for e in pinned.inventory.files if e.path == segment.path)
-    ref = SourceFileRef(
-        content_id=pinned.content_id,
-        path=entry.path,
-        sha256=entry.sha256,
-        size_bytes=entry.size_bytes,
-        media_type=VIDEO_MEDIA_TYPE,
+    ref = content_file_payload_ref(
+        pinned.content_id, entry, media_type=VIDEO_MEDIA_TYPE
     )
     return ref, Fraction(segment.from_timestamp), Fraction(segment.to_timestamp)
 
@@ -325,7 +325,11 @@ def _plan_episode(
                         f"[{float(start)}, {float(end)})"
                     )
                 payload = ref.model_copy(
-                    update={"frame": SourceFrame(timestamp_ns=round(position * 10**9))}
+                    update={
+                        "selector": VideoFrameSelector(
+                            timestamp_ns=round(position * 10**9)
+                        )
+                    }
                 )
                 values = {}
             else:

@@ -1,6 +1,6 @@
 """Content-sourced Episodes on real PostgreSQL and real MinIO (ADR-015 §4,
 §6.4–§6.7, §7; M3.0 D2, D3, D5): BUILD_SNAPSHOT_EPISODES from a registered
-SourceSnapshot, REGISTER_EPISODES through the SourceFileRef gate, and
+SourceSnapshot, REGISTER_EPISODES through the payload registration gate, and
 COMPOSE_DATASET_VERSION of the revisions without any RobotRun.
 
 Each test preserves its own synthetic LeRobot v3.0 tree (its README carries
@@ -320,12 +320,12 @@ async def _built_manifest(env, snapshot_id: str):
         )
 
 
-async def test_a_source_file_ref_that_differs_from_the_inventory_is_rejected(env):
+async def test_a_file_reference_that_differs_from_the_inventory_is_rejected(env):
     snapshot_id, content_id = await env.snapshot()
     manifest = await _built_manifest(env, snapshot_id)
     document = json.loads(manifest.to_canonical_bytes())
     for occurrence in document["observations"]:
-        occurrence["payload"]["sha256"] = "sha256:" + "0" * 64
+        occurrence["payload"]["checksum"] = "sha256:" + "0" * 64
     forged = type(manifest).model_validate(document)
     with pytest.raises(EpisodeManifestRejectedError, match="inventory pins"):
         await env.register([await _republish(env, forged)])
@@ -341,7 +341,7 @@ async def test_a_referenced_content_object_missing_from_minio_is_rejected(env):
             content.inventory_artifact_id
         )
     await env.store.delete_prefix(content_file_uri(inventory.uri, VIDEO_PATH))
-    with pytest.raises(EpisodeManifestRejectedError, match="not stored"):
+    with pytest.raises(EpisodeManifestRejectedError, match="has no object at"):
         await env.register(built.manifest_artifact_ids)
     assert (await env.counts(content_id))["revisions"] == 0
 
@@ -374,8 +374,10 @@ async def test_a_binding_to_unregistered_content_is_out_of_scope(env, tmp_path):
         "source": source.model_dump(mode="json"),
         "producer": producer.model_dump(mode="json"),
     }
+    own_id = manifest.lineage.source.content_id
     for occurrence in document["observations"]:
-        occurrence["payload"]["content_id"] = other_id
+        payload = occurrence["payload"]
+        payload["uri"] = payload["uri"].replace(own_id, other_id)
     rebound = type(manifest).model_validate(document)
     with pytest.raises(EpisodeRegistrationScopeError, match="not registered"):
         await env.register([await _republish(env, rebound)])

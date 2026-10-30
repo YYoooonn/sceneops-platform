@@ -27,6 +27,8 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
 
+from . import rules
+
 OBSERVATION_SCHEMA = "sceneops.reference_observation/1"
 
 
@@ -249,8 +251,8 @@ def _collect_manifest(
         return
     manifest = json.loads(data)
     for ref in _payload_refs(manifest):
-        payload_id = ref.get("artifact_id")
-        if payload_id in obs["payloads"]:
+        payload_id = rules.payload_artifact_id_of(ref)
+        if payload_id is None or payload_id in obs["payloads"]:
             continue
         record = snake((api(f"/artifacts/{payload_id}") or {}).get("artifact"))
         obs["payloads"][payload_id] = {

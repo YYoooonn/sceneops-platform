@@ -459,8 +459,11 @@ async def test_a_revision_whose_referenced_file_is_missing_never_becomes_composa
             content.inventory_artifact_id
         )
     missing = manifest.observations[0].payload
-    await mixed.store.delete_prefix(content_file_uri(inventory.uri, missing.path))
-    with pytest.raises(SceneManifestRejectedError, match="not stored"):
+    path = missing.logical_uri().key.removeprefix(
+        f"contents/{content.content_id}/files/"
+    )
+    await mixed.store.delete_prefix(content_file_uri(inventory.uri, path))
+    with pytest.raises(SceneManifestRejectedError, match="has no object at"):
         await mixed.register("nuscenes", build.manifest_artifact_ids)
     pin = RevisionPin(
         domain="scene", unit_id=scene_id_for(manifest.lineage.source),

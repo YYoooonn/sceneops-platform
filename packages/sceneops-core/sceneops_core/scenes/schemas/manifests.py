@@ -1,5 +1,5 @@
-"""SceneManifest v4 -- the canonical, source-faithful description of one
-Scene (ADR-007 §13.5-§13.8, §14, §27; ADR-015 §6.5, §6.6).
+"""SceneManifest -- the canonical, source-faithful description of one Scene
+(ADR-007 §13.5-§13.8, §14, §27; ADR-015 §6.5, §6.6; ADR-017).
 
 A Scene is a spatiotemporal environmental observation unit of one source
 unit: a window of a registered RobotRun recording
@@ -32,13 +32,13 @@ integer nanosecond count in exactly one clock domain the manifest declares
 keyframe group) names its own. Every clock the window or a structure names
 is declared exactly once, with its origin, and every declared clock is used.
 
-Payloads are referenced by identity and integrity, never by storage
-location (``sceneops_core.artifacts.schemas.payload``): a SceneOps payload
-artifact (``ArtifactPayloadRef``) or a preserved file of the unit's own
-content (``SourceFileRef``), so moving storage roots or backends never
-changes a manifest or its checksum.
+Payloads are referenced by Logical URI and integrity, never by storage
+location (``PayloadRef``, ``sceneops_core.artifacts.schemas.payload``), the
+same way for every source, so moving storage roots or backends never changes
+a manifest or its checksum. The schema version is
+``sceneops.scene_manifest/v5``.
 
-Representation conventions fixed by ``sceneops.scene_manifest/v4``:
+Representation conventions:
 
     time          integer nanoseconds in a declared clock domain
     translation   metres, [x, y, z]
@@ -77,7 +77,7 @@ from pydantic import (
     model_validator,
 )
 
-from sceneops_core.artifacts.schemas.payload import PayloadRef, SourceFileRef
+from sceneops_core.artifacts.schemas.payload import PayloadRef
 from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.common.identifiers import (
@@ -97,7 +97,7 @@ from sceneops_core.provenance import (
 
 from .enums import SceneFrameRole, SceneGroupKind, SceneModality
 
-SCENE_MANIFEST_SCHEMA_V4: Final = "sceneops.scene_manifest/v4"
+SCENE_MANIFEST_SCHEMA_V5: Final = "sceneops.scene_manifest/v5"
 
 # A unit quaternion is stored as the source gives it (never renormalized);
 # this tolerance only rejects values that are not rotations at all.
@@ -315,7 +315,9 @@ def _require_known(values: Iterable[str | None], known: set[str], what: str) -> 
 
 
 class SceneManifest(_ManifestModel):
-    schema_version: Literal["sceneops.scene_manifest/v4"] = SCENE_MANIFEST_SCHEMA_V4
+    # A new version changes every builder's output bytes, so it moves only
+    # together with every Scene builder's semantics version (ADR-017).
+    schema_version: Literal["sceneops.scene_manifest/v5"] = SCENE_MANIFEST_SCHEMA_V5
     lineage: SceneLineage
     clock_domains: list[ClockDomain] = Field(min_length=1)
 
@@ -331,7 +333,6 @@ class SceneManifest(_ManifestModel):
         self._check_ordering()
         self._check_references()
         self._check_native_refs()
-        self._check_source_files()
         self._check_clock_domains()
         self._check_source_window()
         return self
@@ -459,25 +460,6 @@ class SceneManifest(_ManifestModel):
                     "identifier names one source structure"
                 )
 
-    def _check_source_files(self) -> None:
-        """A preserved-file reference names a file of the unit's own content:
-        a unit reads one source, so a reference to any other content (or from
-        a recording-sourced unit) is a wrong binding."""
-        source = self.lineage.source
-        for observation in self.observations:
-            payload = observation.payload
-            if not isinstance(payload, SourceFileRef):
-                continue
-            if (
-                source.source_kind != "content"
-                or payload.content_id != source.content_id
-            ):
-                raise ValueError(
-                    f"{observation.observation_id!r} references a file of "
-                    f"{payload.content_id}, not of the Scene's own source "
-                    f"{source.source_id}"
-                )
-
     def _check_clock_domains(self) -> None:
         check_clock_domains(
             self.clock_domains,
@@ -554,8 +536,8 @@ class SceneManifest(_ManifestModel):
 
 
 def load_canonical_scene_manifest(data: bytes) -> SceneManifest:
-    """Strictly parse manifest bytes and require them to be canonical:
-    ``canonical(parse(data)) == data``."""
+    """Strictly parse manifest bytes of the current schema version and require
+    them to be canonical: ``canonical(parse(data)) == data``."""
     try:
         payload = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -564,7 +546,7 @@ def load_canonical_scene_manifest(data: bytes) -> SceneManifest:
     if not isinstance(payload, dict):
         raise SceneManifestError("manifest must be a JSON object")
     schema_version = payload.get("schema_version")
-    if schema_version != SCENE_MANIFEST_SCHEMA_V4:
+    if schema_version != SCENE_MANIFEST_SCHEMA_V5:
         raise UnsupportedSceneManifestVersionError(
             f"unsupported SceneManifest schema_version: {schema_version!r}"
         )
@@ -576,14 +558,14 @@ def load_canonical_scene_manifest(data: bytes) -> SceneManifest:
 
     if manifest.to_canonical_bytes() != data:
         raise NonCanonicalSceneManifestError(
-            "manifest bytes are not in canonical SceneManifest v4 form"
+            f"manifest bytes are not in canonical {schema_version} form"
         )
     return manifest
 
 
 __all__ = [
     "QUATERNION_NORM_TOLERANCE",
-    "SCENE_MANIFEST_SCHEMA_V4",
+    "SCENE_MANIFEST_SCHEMA_V5",
     "FrameTransform",
     "ImageSize",
     "NonCanonicalSceneManifestError",

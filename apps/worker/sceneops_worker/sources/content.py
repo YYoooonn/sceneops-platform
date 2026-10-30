@@ -1,39 +1,21 @@
 """Registered SourceContent as canonical builds and registration read it
-(ADR-015 §6.4, §6.5; M3.0 D3, D4, D5).
+(ADR-015 §6.4, §6.5; M3.0 D4, D5).
 
 ``resolve_registered_content`` reaches a content's files only through its
 registered records: the content row pins ``content_checksum``, its inventory
 ArtifactRecord names where the inventory is stored (D4), and the stored
 inventory is accepted only with exactly that checksum. No root setting and no
-caller URI is involved.
-
-``verify_source_file_refs`` is the registration gate for preserved-file
-payload references (R7, MS-7): every ``SourceFileRef`` names a file of a
-registered content with exactly the inventory entry's sha256 and size, and
-that file's object is present in the store with its inventory size (one
-listing per content prefix). The content's files were fully hashed when it
-was first registered and are write-once, so presence and size are checked
-here, not the bytes again. The media type is the builder's assertion, covered
-by the manifest checksum (D3).
+caller URI is involved. The registration gate for references to the content's
+files is ``sceneops_worker.payload_registration``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass
 
-from sceneops_core.artifacts.schemas import ArtifactKind, SourceFileRef
-from sceneops_core.sources import (
-    SourceContentInventory,
-    SourceContentRecord,
-    SourceFileEntry,
-)
-from sceneops_sources import (
-    ContentFileError,
-    content_file_uri,
-    content_files_prefix,
-    load_stored_inventory,
-)
+from sceneops_core.artifacts.schemas import ArtifactKind
+from sceneops_core.sources import SourceContentInventory, SourceContentRecord
+from sceneops_sources import ContentFileError, load_stored_inventory
 
 from sceneops_worker.core.context import WorkerContext
 
@@ -41,11 +23,6 @@ from sceneops_worker.core.context import WorkerContext
 class RegisteredContentError(RuntimeError):
     """A content is not registered, or its registered records and stored
     inventory disagree."""
-
-
-class SourceFileRefError(RuntimeError):
-    """A preserved-file reference does not match its content's inventory or
-    stored files."""
 
 
 @dataclass(frozen=True)
@@ -80,78 +57,8 @@ async def resolve_registered_content(
     )
 
 
-def source_file_ref_mismatch(
-    ref: SourceFileRef, content_id: str, entries: dict[str, SourceFileEntry]
-) -> str | None:
-    """Why ``ref`` is not exactly the inventory entry of ``content_id`` it
-    names, or None if it is."""
-    if ref.content_id != content_id:
-        return f"{ref.path!r} is referenced in {ref.content_id}, not {content_id}"
-    entry = entries.get(ref.path)
-    if entry is None:
-        return f"{ref.path!r} is not a file of {ref.content_id}"
-    if (entry.sha256, entry.size_bytes) != (ref.sha256, ref.size_bytes):
-        return (
-            f"{ref.path!r} is referenced as {ref.size_bytes} bytes {ref.sha256}; the "
-            f"inventory pins {entry.size_bytes} bytes {entry.sha256}"
-        )
-    return None
-
-
-async def verify_source_file_refs(
-    context: WorkerContext,
-    content: RegisteredContent,
-    refs: Iterable[SourceFileRef],
-) -> None:
-    entries = {entry.path: entry for entry in content.inventory.files}
-    referenced = {
-        (ref.path, ref.sha256, ref.size_bytes, ref.content_id): ref for ref in refs
-    }
-    problems = sorted(
-        {
-            problem
-            for ref in referenced.values()
-            if (
-                problem := source_file_ref_mismatch(
-                    ref, content.record.content_id, entries
-                )
-            )
-            is not None
-        }
-    )
-    if problems:
-        raise SourceFileRefError(
-            f"{len(problems)} source file reference(s) do not match the inventory: "
-            f"{problems[:5]}"
-        )
-    if not referenced:
-        return
-    stored = {
-        obj.uri: obj.size_bytes
-        for obj in await context.artifact_store.list_objects(
-            content_files_prefix(content.inventory_uri)
-        )
-    }
-    absent = sorted(
-        {
-            ref.path
-            for ref in referenced.values()
-            if stored.get(content_file_uri(content.inventory_uri, ref.path))
-            != ref.size_bytes
-        }
-    )
-    if absent:
-        raise SourceFileRefError(
-            f"{len(absent)} referenced file(s) of {content.record.content_id} are not "
-            f"stored with their inventory size: {absent[:5]}"
-        )
-
-
 __all__ = [
     "RegisteredContent",
     "RegisteredContentError",
-    "SourceFileRefError",
     "resolve_registered_content",
-    "source_file_ref_mismatch",
-    "verify_source_file_refs",
 ]

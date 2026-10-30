@@ -473,3 +473,41 @@ def test_fixture_recordings_are_l1_conformant(tmp_path):
 
     assert check_l1_recording(episode_recording().write(tmp_path / "a.mcap")).conforms
     assert check_l1_recording(_scene_and_episode_recording(tmp_path)).conforms
+
+
+def test_the_builder_emits_episode_manifest_v4_with_logical_payload_refs(recording):
+    """The emitted schema version moves only with the builder's semantics
+    version (ADR-017). Every observation payload is the planned payload, named
+    by the Logical URI of the key it is published under."""
+    from sceneops_core.artifacts.schemas import PayloadRef
+    from sceneops_core.episodes.schemas import EPISODE_MANIFEST_SCHEMA_V4
+    from sceneops_episodes.recording_builder import RECORDING_EPISODE_SEMANTICS_VERSION
+    from sceneops_recording.observations.store import observation_payload_uri
+
+    plan = _plan(recording)
+    assert {e.manifest.schema_version for e in plan.episodes} == {
+        EPISODE_MANIFEST_SCHEMA_V4
+    }
+    assert (
+        {e.manifest.lineage.producer.semantics_version for e in plan.episodes}
+        == {RECORDING_EPISODE_SEMANTICS_VERSION}
+        == {5}
+    )
+    refs = [
+        o.payload
+        for e in plan.episodes
+        for o in e.manifest.occurrences()
+        if o.payload is not None
+    ]
+    assert refs and {type(r) for r in refs} == {PayloadRef}
+    planned = {
+        observation_payload_uri(
+            robot_run_id=p.robot_run_id, artifact_id=p.artifact_id
+        ): (p.checksum, p.size_bytes, p.media_type)
+        for p in plan.payloads.values()
+    }
+    run = plan.episodes[0].manifest.lineage.source.robot_run_id
+    for ref in refs:
+        assert ref.uri.startswith(f"sceneops://observation-payloads/{run}/payload-")
+        assert planned[ref.uri] == (ref.checksum, ref.size_bytes, ref.media_type)
+        assert ref.selector is None

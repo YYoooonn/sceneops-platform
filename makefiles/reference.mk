@@ -85,7 +85,8 @@ ifneq ($(REQUIRE_CLEAN),)
 $(error REQUIRE_CLEAN was renamed REQUIRE_PRISTINE (docs/development/reference-contract.md))
 endif
 
-# The object store the source-grounded verifier reads (read-only).
+# The object store the source-grounded verifier reads (read-only). Both contract
+# commands run it: verify, and bootstrap when it evaluates the converged state.
 REFERENCE_VERIFY_ENV := API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
 	MINIO_ENDPOINT_URL="http://localhost:$${MINIO_API_PORT:-9000}" \
 	MINIO_ROOT_USER=$(MINIO_ROOT_USER) MINIO_ROOT_PASSWORD=$(MINIO_ROOT_PASSWORD)
@@ -97,7 +98,7 @@ reference-contract-verify:
 
 .PHONY: reference-contract-bootstrap
 reference-contract-bootstrap:
-	@MAKE=$(MAKE) ENV_FILE=$(ENV_FILE) API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
+	@MAKE=$(MAKE) ENV_FILE=$(ENV_FILE) $(REFERENCE_VERIFY_ENV) \
 		python3 tools/reference/reference_contract.py bootstrap $(if $(REQUIRE_PRISTINE),--require-pristine)
 
 # --------------------

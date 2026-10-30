@@ -361,12 +361,11 @@ def test_consumers_resolve_or_refuse_a_mixed_version_explicitly(api: Api, by_pin
     (recording_scene,) = [p for p in recording["pins"] if p["domain"] == "scene"]
     assert views["scene_count"] == 1
     assert views["skipped"] == [{"reason": "scene_lacks_anchor_channel", "scene_id": recording_scene["unit_id"]}]
-    # The analytical observation table cannot represent a preserved file: the
-    # whole export is refused, and nothing is written.
-    before_export = _objects()
-    export = _job(api, "export_analytics_snapshot", {"dataset_id": DATASET, "dataset_version": "pins"})
-    assert export["status"] == "failed" and "preserved source files" in json.dumps(export["error"]), export["error"]
-    assert _objects() == before_export
+    # The analytical observation table exports every Scene's payloads by
+    # reference, preserved files and recording payloads alike.
+    export = _succeeded(api, "export_analytics_snapshot", {"dataset_id": DATASET, "dataset_version": "pins"})
+    assert export["row_counts"]["scenes"] == 2
+    assert export["row_counts"]["observations"] == EXPECTED["summary"]["observation_count"]
     # Alignment refuses a pusht member and aligns the RobotRun Episode of the same version.
     members = {m["episodeId"]: m for m in api.members("episodes", DATASET, "pins")}
 

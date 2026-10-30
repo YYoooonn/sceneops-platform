@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -483,6 +484,20 @@ def test_a_pristine_environment_passes_the_strict_check():
 def test_the_former_require_clean_flag_no_longer_exists():
     with pytest.raises(SystemExit):
         rc.main(["verify", "--require-clean"])
+
+
+@pytest.mark.parametrize("target", ["reference-contract-verify", "reference-contract-bootstrap"])
+def test_both_contract_commands_give_the_source_grounded_verifier_its_object_store(target):
+    # Both evaluate through run_source_grounded_verifier, which reads the store
+    # with MINIO_ROOT_USER / MINIO_ROOT_PASSWORD; without them it fails on a
+    # KeyError after the bootstrap has already converged. Read as text: a recipe
+    # that names $(MAKE) runs even under `make -n`.
+    makefile = (rc.REPO_ROOT / "makefiles/reference.mk").read_text()
+    store_env = re.search(r"^REFERENCE_VERIFY_ENV :=(.*?)\n\n", makefile, re.M | re.S).group(1)
+    for variable in ("MINIO_ENDPOINT_URL=", "MINIO_ROOT_USER=", "MINIO_ROOT_PASSWORD="):
+        assert variable in store_env
+    recipe = re.search(rf"^{target}:\n((?:\t.*\n)+)", makefile, re.M).group(1)
+    assert "$(REFERENCE_VERIFY_ENV)" in recipe, f"`make {target}` does not pass the store"
 
 
 def test_orphan_units_are_inventoried():

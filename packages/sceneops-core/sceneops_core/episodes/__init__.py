@@ -4,7 +4,7 @@ from .readiness import (
     latest_run_for_revision,
 )
 from .schemas import (
-    EPISODE_MANIFEST_SCHEMA_V3,
+    EPISODE_MANIFEST_SCHEMA_V4,
     EpisodeLineage,
     EpisodeManifest,
     EpisodeOccurrence,
@@ -18,7 +18,7 @@ from .schemas import (
 )
 
 __all__ = [
-    "EPISODE_MANIFEST_SCHEMA_V3",
+    "EPISODE_MANIFEST_SCHEMA_V4",
     "EpisodeLineage",
     "EpisodeManifest",
     "EpisodeOccurrence",

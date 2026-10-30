@@ -29,7 +29,7 @@ path that does not resolve or resolves to a structure or raw bytes, a
 non-finite float, a message without the configured timestamp, unpaired task
 markers, a build that yields no Episode.
 
-Identity rules (frozen by ``semantics_version`` 4):
+Identity rules (frozen by ``semantics_version`` 5):
 
     occurrence_id    <topic slug>-<rank>: rank in the stream's canonical order
                      over the whole recording (canonical timestamp, then MCAP
@@ -38,7 +38,9 @@ Identity rules (frozen by ``semantics_version`` 4):
     unit_key         <segmentation>/<segment> (sceneops_core.provenance.segmentation):
                      the segment is ``recording``, the grid window index k of
                      [k * duration, (k + 1) * duration) or task-<key>-<occurrence>
-    payload artifact shared with the Scene builder (sceneops_worker.recordings)
+    payload artifact shared with the Scene builder
+                     (sceneops_recording.observations.payloads), referenced
+                     as a PayloadRef by the Logical URI of its published key
 """
 
 from __future__ import annotations
@@ -104,9 +106,9 @@ from .plan import EpisodeBuildPlan, PlannedEpisode
 RECORDING_EPISODE_PRODUCER_ID: Final = "sceneops.recording_episode_builder"
 # Bump whenever the canonical bytes a build produces change for the same
 # recording and configuration (it enters the producer fingerprint).
-# 4: EpisodeManifest v3 (a recording Episode declares no frame timeline,
-# component names, transition stream or native reference).
-RECORDING_EPISODE_SEMANTICS_VERSION: Final = 4
+# 5: EpisodeManifest v4 (every observation payload is a PayloadRef by
+# Logical URI).
+RECORDING_EPISODE_SEMANTICS_VERSION: Final = 5
 STRING_SCHEMA: Final = "std_msgs/msg/String"
 
 SourceConfig = EpisodeStreamConfig | EpisodeEventSourceConfig

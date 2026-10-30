@@ -52,6 +52,12 @@ REVISION = PinnedRecording(
 )
 
 
+def _payload_id(ref) -> str:
+    """The payload artifact id a recording payload's Logical URI names
+    (``{robot_run_id}/{artifact_id}``)."""
+    return ref.logical_uri().key.rpartition("/")[2]
+
+
 def _plan(path, config=None, revision=REVISION):
     cfg = RecordingSceneBuildConfig.model_validate(config or build_config())
     return plan_recording_scenes(path, revision=revision, config=cfg)
@@ -410,7 +416,7 @@ def test_equal_timestamps_order_by_sequence_then_file_order(tmp_path):
     tied = [
         o for o in _observations(plan, CAMERA_TOPIC) if o.timestamp_ns == 1_200_000_000
     ]
-    payload_ids = [o.payload.artifact_id for o in tied]
+    payload_ids = [_payload_id(o.payload) for o in tied]
     # sequence 2 (written second) sorts before sequence 3.
     assert payload_ids == [
         observation_payload_artifact_id(
@@ -450,7 +456,7 @@ def test_camera_payload_is_the_compressed_bytes_unchanged(recording):
     camera = _observations(plan, CAMERA_TOPIC)
     for index, observation in enumerate(camera):
         assert observation.payload.media_type == "image/jpeg"
-        assert payloads[observation.payload.artifact_id] == JPEG + bytes([index])
+        assert payloads[_payload_id(observation.payload)] == JPEG + bytes([index])
         assert observation.image_size.width_px == 1600
 
 
@@ -468,7 +474,7 @@ def test_lidar_payload_is_the_serialized_pointcloud2_message(recording):
         )
     }
     lidar = _observations(plan, LIDAR_TOPIC)
-    assert [payloads[o.payload.artifact_id] for o in lidar] == recorded
+    assert [payloads[_payload_id(o.payload)] for o in lidar] == recorded
     for observation, data in zip(lidar, recorded):
         assert observation.payload.media_type == (
             "application/x.ros2-cdr.sensor_msgs.msg.pointcloud2"
@@ -694,3 +700,31 @@ def test_empty_recording_scope_fails(tmp_path):
     config = build_config()
     with pytest.raises(RecordingSceneBuildError, match="not in the recording"):
         _plan(rec.write(tmp_path / "r.mcap"), config)
+
+
+def test_the_builder_emits_scene_manifest_v5_with_logical_payload_refs(recording):
+    """The emitted schema version moves only with the builder's semantics
+    version (ADR-017). Every observation names its planned payload by the
+    Logical URI of the key it is published under, {robot_run_id}/{artifact id}."""
+    from sceneops_core.artifacts.schemas import PayloadRef
+    from sceneops_core.scenes.schemas import SCENE_MANIFEST_SCHEMA_V5
+    from sceneops_recording.observations.store import observation_payload_uri
+    from sceneops_scenes.recording_builder import RECORDING_SCENE_SEMANTICS_VERSION
+
+    plan = _plan(recording)
+    assert {s.manifest.schema_version for s in plan.scenes} == {
+        SCENE_MANIFEST_SCHEMA_V5
+    }
+    assert (
+        {s.manifest.lineage.producer.semantics_version for s in plan.scenes}
+        == {RECORDING_SCENE_SEMANTICS_VERSION}
+        == {6}
+    )
+    refs = [o.payload for s in plan.scenes for o in s.manifest.observations]
+    assert {type(r) for r in refs} == {PayloadRef}
+    planned = {
+        observation_payload_uri(robot_run_id=p.robot_run_id, artifact_id=p.artifact_id)
+        for p in plan.payloads.values()
+    }
+    assert {r.uri for r in refs} == planned
+    assert {r.selector for r in refs} == {None}

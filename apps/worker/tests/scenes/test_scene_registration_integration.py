@@ -38,6 +38,7 @@ from sceneops_db.models.artifacts import ArtifactModel
 from sceneops_db.models.datasets import DatasetVersionMemberModel, DatasetVersionModel
 from sceneops_db.models.scenes import SceneModel, SceneRevisionModel
 from sceneops_db.session import get_async_sessionmaker
+from sceneops_storage import PayloadUriResolver
 from sceneops_worker.core.dependencies import create_worker_context
 from sceneops_worker.datasets.composition import compose_dataset_version
 from sceneops_worker.scenes.registration import (
@@ -47,6 +48,11 @@ from sceneops_worker.scenes.registration import (
 )
 
 RECORDING_CHECKSUM = "sha256:" + "1" * 64
+
+
+def _payload_id(ref) -> str:
+    """The payload artifact id a recording payload's Logical URI names."""
+    return ref.logical_uri().key.rpartition("/")[2]
 
 
 class _Env:
@@ -71,22 +77,23 @@ class _Env:
         kwargs.setdefault("source", self.source())
         return build_scene_manifest(**kwargs)
 
-    def payload_uri(self, artifact_id: str) -> str:
-        return f"{self.settings.artifact_root_uri}/payloads/{artifact_id}"
+    def payload_uri(self, ref) -> str:
+        """Where the recording builders store the payload ``ref`` names."""
+        return PayloadUriResolver.from_settings(self.settings.artifact).resolve(ref.uri)
 
     async def register_payloads(self, ctx, manifest) -> None:
         """Producer side: payload bytes to MinIO plus their
         OBSERVATION_PAYLOAD ArtifactRecords (idempotent per artifact id)."""
         for observation in manifest.observations:
             ref = observation.payload
-            if await ctx.artifact_record_store.get(ref.artifact_id) is not None:
+            if await ctx.artifact_record_store.get(_payload_id(ref)) is not None:
                 continue
-            uri = self.payload_uri(ref.artifact_id)
+            uri = self.payload_uri(ref)
             await ctx.artifact_store.write_bytes(
                 uri, payload_bytes(observation.observation_id)
             )
             await ctx.artifact_record_store.create(
-                artifact_id=ref.artifact_id,
+                artifact_id=_payload_id(ref),
                 ref=ArtifactRef(
                     kind=ArtifactKind.OBSERVATION_PAYLOAD,
                     uri=uri,
@@ -94,6 +101,8 @@ class _Env:
                     size_bytes=ref.size_bytes,
                     checksum=ref.checksum,
                 ),
+                owner_type=ArtifactOwnerType.ROBOT_RUN,
+                owner_id=manifest.lineage.source.robot_run_id,
             )
 
     async def publish(self, manifest, *, with_payloads: bool = True) -> str:
@@ -412,10 +421,11 @@ async def test_a_payload_object_missing_from_minio_is_rejected(env):
     object is gone: the gate, not the record, decides."""
     manifest = env.manifest()
     artifact_id = await env.publish(manifest)
-    payload_id = manifest.observations[-1].payload.artifact_id
+    payload = manifest.observations[-1].payload
+    payload_id = _payload_id(payload)
     async with get_async_sessionmaker()() as session:
         await env.context(session).artifact_store.delete_prefix(
-            env.payload_uri(payload_id)
+            env.payload_uri(payload)
         )
     assert await env.artifact(payload_id) is not None
 
@@ -427,13 +437,13 @@ async def test_a_payload_object_missing_from_minio_is_rejected(env):
 async def test_a_payload_object_of_another_size_is_rejected(env):
     manifest = env.manifest()
     artifact_id = await env.publish(manifest)
-    payload_id = manifest.observations[0].payload.artifact_id
+    payload = manifest.observations[0].payload
     async with get_async_sessionmaker()() as session:
         await env.context(session).artifact_store.write_bytes(
-            env.payload_uri(payload_id), b"truncated"
+            env.payload_uri(payload), b"truncated"
         )
 
-    with pytest.raises(SceneManifestRejectedError, match="9 bytes, recorded"):
+    with pytest.raises(SceneManifestRejectedError, match="has 9 bytes; the reference"):
         await env.register([artifact_id])
     assert await env.revisions() == {}
 
@@ -451,10 +461,10 @@ async def test_payload_refs_are_checked_against_artifact_records_on_postgres(env
     payload = manifest.observations[0].payload
     async with get_async_sessionmaker()() as session:
         await env.context(session).artifact_record_store.create(
-            artifact_id=payload.artifact_id,
+            artifact_id=_payload_id(payload),
             ref=ArtifactRef(
                 kind=ArtifactKind.OBSERVATION_PAYLOAD,
-                uri=env.payload_uri("other"),
+                uri=env.payload_uri(payload),
                 media_type=payload.media_type,
                 size_bytes=payload.size_bytes,
                 checksum="sha256:" + "0" * 64,
@@ -483,7 +493,7 @@ async def test_payload_artifact_record_metadata_is_verified_on_postgres(
     rejects the whole registration and commits nothing."""
     manifest = env.manifest(source=env.source("a"))
     artifact_id = await env.publish(manifest)
-    payload_id = manifest.observations[0].payload.artifact_id
+    payload_id = _payload_id(manifest.observations[0].payload)
     async with get_async_sessionmaker()() as session:
         await session.execute(
             update(ArtifactModel)
@@ -504,7 +514,7 @@ async def test_a_rejected_registration_leaves_no_unit_row(env):
     artifact_id = await env.publish(manifest)
     async with get_async_sessionmaker()() as session:
         await env.context(session).artifact_store.delete_prefix(
-            env.payload_uri(manifest.observations[0].payload.artifact_id)
+            env.payload_uri(manifest.observations[0].payload)
         )
     with pytest.raises(SceneManifestRejectedError):
         await env.register([artifact_id])

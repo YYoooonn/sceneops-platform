@@ -1,6 +1,6 @@
 from .enums import EpisodeOutcome
 from .manifests import (
-    EPISODE_MANIFEST_SCHEMA_V3,
+    EPISODE_MANIFEST_SCHEMA_V4,
     EpisodeField,
     EpisodeLineage,
     EpisodeManifest,
@@ -23,7 +23,7 @@ from .records import (
 from .runs import EpisodeProfileRunRecord, EpisodeValidationRunRecord
 
 __all__ = [
-    "EPISODE_MANIFEST_SCHEMA_V3",
+    "EPISODE_MANIFEST_SCHEMA_V4",
     "EpisodeField",
     "EpisodeLineage",
     "EpisodeManifest",

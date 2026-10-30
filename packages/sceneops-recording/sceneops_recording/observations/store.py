@@ -7,14 +7,30 @@ was extracted from::
 
 Both recording builders publish through this store, so a payload a Scene
 build already extracted is reused by an Episode build of the same RobotRun
-(and vice versa). Readers never derive the key: a manifest names a payload
-by artifact id and its OBSERVATION_PAYLOAD ArtifactRecord holds the URI.
+(and vice versa). A manifest names a payload by the Logical URI of that key
+(``observation_payload_uri``, ADR-016); registration accepts it only when the
+payload's OBSERVATION_PAYLOAD ArtifactRecord, owned by the same RobotRun,
+records exactly the location the URI resolves to.
 """
 
 from __future__ import annotations
 
+from sceneops_core.artifacts.logical_uri import LogicalNamespace, format_logical_uri
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_storage import ArtifactStore
+
+
+def observation_payload_key(*, robot_run_id: str, artifact_id: str) -> str:
+    """A payload's object key relative to the payload root."""
+    return f"{robot_run_id}/{artifact_id}"
+
+
+def observation_payload_uri(*, robot_run_id: str, artifact_id: str) -> str:
+    """A payload's Logical URI: its key in the observation-payloads namespace."""
+    return format_logical_uri(
+        LogicalNamespace.OBSERVATION_PAYLOADS,
+        observation_payload_key(robot_run_id=robot_run_id, artifact_id=artifact_id),
+    )
 
 
 class ObservationPayloadConflictError(RuntimeError):
@@ -29,7 +45,8 @@ class ObservationPayloadStore:
 
     def payload_uri(self, *, robot_run_id: str, artifact_id: str) -> str:
         return self.artifact_store.join_uri(
-            self.payload_root_uri, robot_run_id, artifact_id
+            self.payload_root_uri,
+            observation_payload_key(robot_run_id=robot_run_id, artifact_id=artifact_id),
         )
 
     async def publish(
@@ -56,4 +73,9 @@ class ObservationPayloadStore:
         return uri, True
 
 
-__all__ = ["ObservationPayloadConflictError", "ObservationPayloadStore"]
+__all__ = [
+    "ObservationPayloadConflictError",
+    "ObservationPayloadStore",
+    "observation_payload_key",
+    "observation_payload_uri",
+]

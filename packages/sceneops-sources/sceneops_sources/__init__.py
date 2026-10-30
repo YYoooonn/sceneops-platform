@@ -19,6 +19,8 @@ from .content_files import (
 )
 from .layout import (
     SourceLayoutError,
+    content_file_key,
+    content_file_payload_ref,
     content_file_uri,
     content_files_prefix,
     content_id_of_inventory_uri,
@@ -54,6 +56,8 @@ __all__ = [
     "SourceTreeError",
     "StoredContentFiles",
     "build_inventory",
+    "content_file_key",
+    "content_file_payload_ref",
     "content_file_uri",
     "content_files_prefix",
     "content_id_of_inventory_uri",

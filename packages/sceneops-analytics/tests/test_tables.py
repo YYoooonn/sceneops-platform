@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
-from sceneops_core.artifacts.schemas import SourceFileRef
+from sceneops_core.artifacts.logical_uri import LogicalNamespace
 from sceneops_core.provenance import ContentUnitSource, manifest_artifact_id_for
 from sceneops_core.scenes.schemas import (
     SceneManifest,
@@ -16,8 +14,8 @@ from sceneops_core.scenes.schemas import (
 from sceneops_core.scenes.testing import build_scene_manifest, recording_source
 from sceneops_core.sources import content_id_for
 from sceneops_analytics.tables import (
+    OBSERVATIONS_SCHEMA,
     TABLE_BUILDERS,
-    UnsupportedSceneContentError,
     build_keyframes_table,
     build_observations_table,
     build_scenes_table,
@@ -77,8 +75,13 @@ def test_observations_table_keeps_every_observation_with_its_own_time():
     assert set(df["modality"].to_list()) == {"camera", "lidar"}
     assert df["source_clock"].unique().to_list() == ["mcap_log_time"]
     assert df["payload_checksum"].null_count() == 0
-    assert df["payload_artifact_id"].null_count() == 0
-    assert "payload_uri" not in df.columns
+    assert df["payload_uri"].null_count() == 0
+    assert all(
+        uri.startswith("sceneops://observation-payloads/run-001/")
+        for uri in df["payload_uri"].to_list()
+    )
+    assert df["payload_selector"].null_count() == df.height
+    assert "payload_artifact_id" not in df.columns
 
 
 def test_every_timestamp_row_carries_its_own_clock():
@@ -122,7 +125,10 @@ def test_keyframes_table_has_one_row_per_group_and_no_annotation_data():
     assert not any("annotation" in column for column in keyframes.columns)
 
 
-def test_preserved_source_file_payloads_are_refused_explicitly():
+def test_every_source_exports_the_same_payload_columns():
+    """A content Scene's preserved files are exported exactly like recording
+    payloads: by reference, with no source-specific column or refusal; a
+    selector is kept as canonical JSON."""
     checksum = "sha256:" + "c" * 64
     source = ContentUnitSource(
         content_id=content_id_for(checksum),
@@ -133,16 +139,25 @@ def test_preserved_source_file_payloads_are_refused_explicitly():
         unit_key="scene-token",
     )
     payload = json.loads(build_scene_manifest(source=source).to_canonical_bytes())
-    for i, observation in enumerate(payload["observations"]):
-        observation["payload"] = SourceFileRef(
-            content_id=source.content_id,
-            path=f"samples/x/{i}.jpg",
-            sha256="sha256:" + "a" * 64,
-            size_bytes=1,
-            media_type="image/jpeg",
-        ).model_dump(mode="json")
-    manifest = SceneManifest.model_validate(payload)
-    with pytest.raises(UnsupportedSceneContentError, match="preserved source files"):
-        build_observations_table(
-            dataset_id="ds", dataset_version="v1", manifests=[("scene-1", manifest)]
+    for observation in payload["observations"]:
+        observation["payload"].update(
+            media_type="video/mp4",
+            selector={"kind": "video_frame", "timestamp_ns": 33_333_333},
         )
+    content = SceneManifest.model_validate(payload)
+    df = build_observations_table(
+        dataset_id="ds",
+        dataset_version="v1",
+        manifests=[("scene-1", content), ("scene-2", _manifest())],
+    )
+    assert df.columns == list(OBSERVATIONS_SCHEMA)
+    rows = df.filter(df["scene_id"] == "scene-1").to_dicts()
+    assert [r["payload_uri"] for r in rows] == [
+        o.payload.uri for o in content.observations
+    ]
+    assert {LogicalNamespace(r["payload_uri"].split("/")[2]) for r in rows} == {
+        LogicalNamespace.SOURCES
+    }
+    assert {r["payload_selector"] for r in rows} == {
+        '{"kind":"video_frame","timestamp_ns":33333333}'
+    }

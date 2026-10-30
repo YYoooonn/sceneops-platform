@@ -86,9 +86,9 @@ class ExportAnalyticsSnapshotJobHandler(
                 resolved = await resolve_registered_scene(context, scene)
                 manifests.append((scene.scene_id, resolved.manifest))
 
-        # Every table is built before any is written: a Scene a table cannot
-        # represent (UnsupportedSceneContentError) refuses the whole export
-        # without leaving another table's object behind.
+        # Every table is built before any is written, so a build failure
+        # refuses the whole export without leaving another table's object
+        # behind.
         frames: dict[str, pl.DataFrame] = {}
         if "scenes" in requested_tables:
             frames["scenes"] = build_scenes_table(

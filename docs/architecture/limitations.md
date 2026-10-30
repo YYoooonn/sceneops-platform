@@ -193,9 +193,10 @@ native reader or content builder, and no format has both. Current builder bounds
 - Sample views associate by nearest / previous only (no pose interpolation); evaluation
   applies no frame transform. Episodes have no label sets. See
   [Derived layer](./derived-layer.md) §7.
-- `export_analytics_snapshot` covers Scene tables only, of recording-sourced Scenes: a
-  Scene whose observations reference preserved source files is refused
-  (`UnsupportedSceneContentError`). Aligned Episodes have their own learning export.
+- `export_analytics_snapshot` covers Scene tables only. Observations are exported by
+  payload reference (`payload_uri`, integrity, media type, `payload_selector`) for every
+  source; the analytical tables carry no schema version of their own. Aligned Episodes
+  have their own learning export.
 - Native label import exists for nuScenes only (validated on the `scene-0061` slice);
   visibility, point counts and annotation prev / next links are not carried. An anchor
   carries no unit key, so a unit-origin clock cannot be labelled. Detection lifts
@@ -208,10 +209,14 @@ native reader or content builder, and no format has both. Current builder bounds
 - LeRobot is the only external export format; no integration-run record is
   persisted ([Dataset interoperability](./dataset-interoperability.md) §10,
   [External integration runtime](./external-integration-runtime.md) §4).
-- LeRobot-sourced Episodes are not aligned or exported. Alignment refuses an Episode
-  with a preserved-file payload or a `transition` stream
-  (`UnsupportedEpisodeContentError`), and the learning export and the LeRobot export
-  read only aligned artifacts. `frame_timeline`, `component_names` and `transition`
+- Alignment refuses an Episode with a `transition` stream
+  (`UnsupportedEpisodeContentError`), so a LeRobot Episode built with a `next.*`
+  feature is not aligned or exported. Without one, alignment carries its video frames
+  as reference values (Logical URI and `video_frame` selector; the learning export keeps
+  the selector beside the URI) and decodes nothing; `ALIGN_EPISODE` is exercised on a
+  real pusht Episode built without `next.*` (`SUITE=lerobot-episodes`), the learning and
+  LeRobot exports have not been run on a LeRobot Episode. `frame_timeline`,
+  `component_names` and `transition`
   streams have no consumer yet; an event view derived from a `transition` stream
   would need a declared rule (pusht's `next.done` is true on the last two frames of
   every episode).
@@ -224,4 +229,11 @@ native reader or content builder, and no format has both. Current builder bounds
   throughput; the default fixture is nuScenes mini.
 - GroundingDINO results are integration signals, not model benchmarks; the default
   Scene ML journey uses the mock backend.
+- The GroundingDINO server reads camera images itself, from the physical `image_uri`
+  (`file://` under its allowed roots, or `s3://` when S3 is enabled) and verifies the
+  object's size and full sha256 against the pin in the request before decoding those
+  bytes ([ADR-016](../adr/016-logical-uri-and-verified-payload-access.md)). A missing,
+  mismatched or undecodable camera image fails the whole `predict_detection` run: the
+  prediction manifest has no per-sample failure record, so it cannot be skipped the way an
+  unreadable LiDAR payload only fails that sample's lifting.
 - Operations and leaderboard APIs exist; there is no web UI.

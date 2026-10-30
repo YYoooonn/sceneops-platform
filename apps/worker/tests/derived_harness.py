@@ -234,7 +234,13 @@ class Harness:
     jobs: int = 0
 
     def __post_init__(self) -> None:
-        self.settings = SimpleNamespace(run_root_uri=f"{self.root}/runs")
+        self.settings = SimpleNamespace(
+            run_root_uri=f"{self.root}/runs",
+            artifact=SimpleNamespace(
+                observation_payload_root_uri=f"{self.root}/payloads",
+                source_root_uri=f"{self.root}/sources",
+            ),
+        )
         self.runs = SimpleNamespace(
             inference=self.inference_runs,
             evaluations=self.evaluation_runs,
@@ -308,17 +314,15 @@ class Harness:
         )
         for observation in manifest.observations:
             ref = observation.payload
+            key = ref.logical_uri().key
             uri = self.artifact_store.join_uri(
-                self.root,
-                "payloads",
-                manifest.lineage.source.robot_run_id,
-                ref.artifact_id,
+                self.settings.artifact.observation_payload_root_uri, key
             )
             await self.artifact_store.write_bytes(
                 uri, payload_bytes(observation.observation_id)
             )
             await self.artifact_record_store.register(
-                artifact_id=ref.artifact_id,
+                artifact_id=key.rpartition("/")[2],
                 ref=ArtifactRef(
                     kind=ArtifactKind.OBSERVATION_PAYLOAD,
                     uri=uri,

@@ -18,15 +18,17 @@ time           lerobot.frame_time, origin unit, resolution 1 ns; frame k at
                float32(frame_index / fps) and frames are dense from 0   §6.2, §6.6
 streams        topic = feature key, schema_name = dtype, fields [{value, feature,
                component_names}] (a vector's source names, flattened from a
-               one-key dict); video features: SourceFileRef {content_id, path,
-               sha256, size_bytes, video/mp4, frame round_half_even((from_timestamp
-               + k / fps) · 10⁹)}; one occurrence per frame, id <feature>-<k:08d>,
+               one-key dict); video features: PayloadRef {uri =
+               sceneops://sources/contents/<content_id>/files/<path> (ADR-016
+               spelling), sha256, size_bytes, video/mp4, selector {video_frame,
+               round_half_even((from_timestamp + k / fps) · 10⁹)}}; one occurrence
+               per frame, id <feature>-<k:08d>,
                native_ref = str(index)                       §6.5, §6.6, D3, D8
 task events    topic task_index: one at every change of task_index (frame 0
                first), values {task, task_index} from meta/tasks.parquet   D13
 transitions    selected next.* features: one occurrence per frame, value verbatim,
                no event derived                              D9
-producer       sceneops.lerobot_episode_builder v1; fingerprint over the normalized
+producer       sceneops.lerobot_episode_builder v2; fingerprint over the normalized
                build configuration and {source_kind: content, content_id,
                content_checksum}                             ADR-007 §15.2, §4
 ```
@@ -55,12 +57,12 @@ import pyarrow.parquet as pq
 from . import rules
 from .findings import Findings
 
-MANIFEST_SCHEMA = "sceneops.episode_manifest/v3"
+MANIFEST_SCHEMA = "sceneops.episode_manifest/v4"
 CONTENT_ID_SCHEMA = "sceneops.content_id/v1"
 CLOCK = "lerobot.frame_time"
 CLOCK_DOMAINS = [{"clock": CLOCK, "origin": "unit", "resolution_ns": 1}]
 PRODUCER_ID = "sceneops.lerobot_episode_builder"
-SEMANTICS_VERSION = 1
+SEMANTICS_VERSION = 2
 VIDEO_MEDIA_TYPE = "video/mp4"
 TASK_TOPIC = "task_index"
 ROLE_LISTS = {
@@ -325,13 +327,14 @@ def derive(
                         episode[f"videos/{key}/from_timestamp"]
                     ) + Fraction(k, fps)
                     occurrence["payload"] = {
-                        "kind": "source_file",
-                        "content_id": content_id,
-                        "path": path,
-                        "sha256": entry["sha256"],
+                        "uri": rules.content_file_uri(content_id, path),
+                        "checksum": entry["sha256"],
                         "size_bytes": entry["size_bytes"],
                         "media_type": VIDEO_MEDIA_TYPE,
-                        "frame": {"timestamp_ns": round(position * 10**9)},
+                        "selector": {
+                            "kind": "video_frame",
+                            "timestamp_ns": round(position * 10**9),
+                        },
                     }
                 else:
                     occurrence["values"] = {"value": row[key]}
@@ -476,9 +479,14 @@ def collect(
             if data is not None:
                 manifest = json.loads(data)
                 referenced |= {
-                    o["payload"]["path"]
+                    path
                     for o in manifest.get("observations", [])
-                    if (o.get("payload") or {}).get("kind") == "source_file"
+                    if (
+                        path := rules.content_file_path_of(
+                            o.get("payload"), content_id
+                        )
+                    )
+                    is not None
                 }
     inventory_uri = (obs["inventory"] or {}).get("uri")
     if inventory_uri:
@@ -579,10 +587,9 @@ def synthetic_observation(
             }
         )
         for o in unit.manifest["observations"]:
-            if (o.get("payload") or {}).get("kind") == "source_file":
-                obs["content_objects"][o["payload"]["path"]] = o["payload"][
-                    "size_bytes"
-                ]
+            path = rules.content_file_path_of(o.get("payload"), raw.content_id)
+            if path is not None:
+                obs["content_objects"][path] = o["payload"]["size_bytes"]
     if dataset_key:
         obs["dataset_version"] = {
             "key": dataset_key,
@@ -1055,21 +1062,23 @@ def _content_binding(manifest: dict[str, Any]) -> None:
             )
         )[:32]
     )
+    own_id = manifest["lineage"]["source"]["content_id"]
     manifest["lineage"]["source"].update(
         content_id=other_id, content_checksum=other_checksum
     )
     for o in manifest["observations"]:
-        o["payload"]["content_id"] = other_id
+        path = rules.content_file_path_of(o["payload"], own_id)
+        o["payload"]["uri"] = rules.content_file_uri(other_id, path)
     _refingerprint(manifest)
 
 
 def _file_checksum(manifest: dict[str, Any]) -> None:
     for o in manifest["observations"]:
-        o["payload"]["sha256"] = rules.checksum(b"another video")
+        o["payload"]["checksum"] = rules.checksum(b"another video")
 
 
 def _frame_selector(manifest: dict[str, Any]) -> None:
-    manifest["observations"][-1]["payload"]["frame"]["timestamp_ns"] += 1
+    manifest["observations"][-1]["payload"]["selector"]["timestamp_ns"] += 1
 
 
 def _missing_file(obs: dict[str, Any]) -> None:
@@ -1130,7 +1139,7 @@ def controls() -> list[Control]:
         ),
         Control(
             "source_file_checksum",
-            "SourceFileRef sha256 of other bytes",
+            "a video reference pins the sha256 of other bytes",
             frozenset({"source_file_ref"}),
             on_manifest(_file_checksum),
         ),

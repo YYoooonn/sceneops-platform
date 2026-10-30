@@ -63,8 +63,9 @@ BUILD_SNAPSHOT_EPISODES           snapshot_id -> content_id once (recorded on th
                                   -> PinnedContent + the verified files its reader reads
                                   -> manifests: lineage ContentUnitSource
                                      + ProducerInfo over ContentSourceRevision;
-                                     payloads SourceFileRef, no payload object
-REGISTER_SCENES / REGISTER_EPISODES  as above; the gate checks every SourceFileRef
+                                     payloads PayloadRef to the preserved files in
+                                     place, no payload object
+REGISTER_SCENES / REGISTER_EPISODES  as above; the gate checks every PayloadRef
                                   against the content inventory and the store
 ```
 
@@ -187,16 +188,21 @@ binding projects the source revision the producer fingerprint is computed over.
   LeRobot Episode builder `ContentUnitSource`. A manifest variant lands together with
   the builder that produces it, so registration and downstream consumers never
   receive a source kind nothing produces.
-- Payload references are the closed union `PayloadRef`
-  (`sceneops_core.artifacts.schemas.payload`): `ArtifactPayloadRef` (a SceneOps-owned
-  payload object) or `SourceFileRef` (a preserved file of the unit's own content, by
-  `content_id`, `path`, `sha256`, `size_bytes`, a builder-asserted `media_type` and an
-  optional `frame {timestamp_ns}` in the file's own time base). Downstream of
-  canonical manifests, payload resolution (`sceneops_worker.payloads.PayloadLocator`)
-  is the only place that dispatches on the reference kind; a consumer that cannot
-  resolve a kind refuses it explicitly. `tools/checks/source_dispatch.py` (run by
-  `make test`) lists every such site and the modules upstream of the manifests, and
-  fails on any other branch on source kind, format or reference type.
+- Every payload reference is a `PayloadRef`
+  (`sceneops_core.artifacts.schemas.payload`;
+  [ADR-017](../adr/017-unified-payload-ref-and-versioned-manifests.md)): a Logical
+  URI, the whole object's checksum and size, a media type and an optional selector,
+  the same for every source. A recording builder names its RobotRun's observation
+  payloads (`observation-payloads/{robot_run_id}/{artifact_id}`), a content builder
+  the preserved files of its content in place (`sources/contents/{content_id}/files/
+  {path}`, with a builder-asserted media type and, for a video frame, a `video_frame`
+  selector in the file's own time base). Registration proves each URI names bytes of
+  the unit's own registered source (`sceneops_worker.payload_registration`).
+  Downstream of canonical manifests nothing dispatches on the source: consumers read
+  a reference through the verified reader, and one that cannot decode a selector
+  refuses it explicitly. `tools/checks/source_dispatch.py` (run by `make test`) lists
+  the modules upstream of the manifests and the few allowed downstream sites, and
+  fails on any other branch on source kind, format or payload namespace.
 
 ### 4.1 Clock domains
 

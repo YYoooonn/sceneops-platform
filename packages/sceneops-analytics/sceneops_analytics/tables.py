@@ -13,9 +13,9 @@ column is paired with the clock it is counted in; clocks are never
 converted. A manifest carries no
 scene id, so manifest-based builders take ``(scene_id, manifest)`` pairs.
 
-The observation table holds SceneOps payload artifacts only: a Scene whose
-observations reference preserved source files is refused explicitly
-(``UnsupportedSceneContentError``), not exported with a column it cannot fill.
+An observation's payload is exported as its reference, whatever the source:
+Logical URI, checksum, size, media type and, when it selects part of the
+object, the selector as canonical JSON. No payload is read.
 """
 
 from __future__ import annotations
@@ -24,15 +24,11 @@ from collections.abc import Sequence
 
 import polars as pl
 
-from sceneops_core.artifacts.schemas import ArtifactPayloadRef
+from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.robots.schemas import MissionRecord, RobotStateRecord
 from sceneops_core.scenes.schemas import SceneManifest, SceneRevisionRecord
 
 SceneManifests = Sequence[tuple[str, SceneManifest]]
-
-
-class UnsupportedSceneContentError(ValueError):
-    """A Scene's content cannot be represented by the analytical tables."""
 
 
 SCENES_SCHEMA: dict[str, pl.PolarsDataType] = {
@@ -61,10 +57,11 @@ OBSERVATIONS_SCHEMA: dict[str, pl.PolarsDataType] = {
     "modality": pl.Utf8,
     "timestamp_ns": pl.Int64,
     "source_clock": pl.Utf8,
-    "payload_artifact_id": pl.Utf8,
+    "payload_uri": pl.Utf8,
     "payload_checksum": pl.Utf8,
     "payload_media_type": pl.Utf8,
     "payload_size_bytes": pl.Int64,
+    "payload_selector": pl.Utf8,
     "calibration_id": pl.Utf8,
     "ego_pose_id": pl.Utf8,
 }
@@ -114,18 +111,6 @@ def build_observations_table(
 ) -> pl.DataFrame:
     rows = []
     for scene_id, manifest in manifests:
-        files = sorted(
-            {
-                o.channel
-                for o in manifest.observations
-                if not isinstance(o.payload, ArtifactPayloadRef)
-            }
-        )
-        if files:
-            raise UnsupportedSceneContentError(
-                f"Scene {scene_id}: channels {files} reference preserved source "
-                "files, which the observation table cannot represent"
-            )
         modality = {c.channel: c.modality.value for c in manifest.channels}
         clock = {c.channel: c.source_clock for c in manifest.channels}
         rows.extend(
@@ -138,10 +123,17 @@ def build_observations_table(
                 "modality": modality[o.channel],
                 "timestamp_ns": o.timestamp_ns,
                 "source_clock": clock[o.channel],
-                "payload_artifact_id": o.payload.artifact_id,
+                "payload_uri": o.payload.uri,
                 "payload_checksum": o.payload.checksum,
                 "payload_media_type": o.payload.media_type,
                 "payload_size_bytes": o.payload.size_bytes,
+                "payload_selector": (
+                    canonical_json_bytes(
+                        o.payload.selector.model_dump(mode="json")
+                    ).decode()
+                    if o.payload.selector is not None
+                    else None
+                ),
                 "calibration_id": o.calibration_id,
                 "ego_pose_id": o.ego_pose_id,
             }

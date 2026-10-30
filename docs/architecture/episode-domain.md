@@ -159,7 +159,7 @@ The LeRobot builder (`sceneops_episodes.lerobot_builder`) reads the content
 through the native reader `sceneops_sources.lerobot`, which parses LeRobot
 v3.0 (`meta/info.json`, `meta/tasks.parquet`, `meta/episodes/**`, data
 Parquet) through verified content files and refuses any other
-`codebase_version`. Its rules (semantics version 1):
+`codebase_version`. Its rules (semantics version 2):
 
 ```text
 unit          one Episode per native episode; unit_key = str(episode_index)
@@ -175,10 +175,11 @@ streams       one per selected feature: topic = feature key, schema_name = its d
 values        numeric features as one field `value`; float32 kept as its exact
               float64 widening; a vector declares component_names, the source's
               names in order (a list, or a dict with exactly one key)
-video         an observation whose occurrences are SourceFileRefs (video/mp4, from the
-              video dtype and the .mp4 suffix) to the episode's preserved video file,
-              frame selector round_half_even((from_timestamp + k / fps) · 10⁹) in that
-              file's time base; nothing is decoded and no payload is copied
+video         an observation whose occurrences are PayloadRefs (video/mp4, from the
+              video dtype and the .mp4 suffix) to the episode's preserved video file in
+              place (sources Logical URI), with a video_frame selector
+              round_half_even((from_timestamp + k / fps) · 10⁹) in that file's time
+              base; nothing is decoded and no payload is copied
 task events   stream task_index: one event at every frame whose task differs from the
               previous frame's (always frame 0), values {task, task_index}
 transitions   a selected next.* feature: one occurrence per frame at the frame the row
@@ -191,8 +192,10 @@ format evidence, and a `names` dict with more than one group fail the build.
 
 ## 4. EpisodeManifest
 
-`sceneops.episode_manifest/v3`
-(`packages/sceneops-core/sceneops_core/episodes/schemas/manifests.py`):
+`sceneops.episode_manifest/v4`
+(`packages/sceneops-core/sceneops_core/episodes/schemas/manifests.py`); the
+loader refuses every other version
+([ADR-017](../adr/017-unified-payload-ref-and-versioned-manifests.md)):
 
 ```text
 lineage         source binding: RecordingSegmentSource (robot_run_id, recording
@@ -206,9 +209,9 @@ streams[]       topic, role (observation | state | action | event | transition),
                 has_payload
 observations[] states[] actions[] events[] transitions[]
                 occurrence_id, topic, timestamp_ns, values, payload?, native_ref?
-payload         ArtifactPayloadRef {kind artifact, artifact_id, checksum, size_bytes,
-                media_type} or SourceFileRef {kind source_file, content_id, path,
-                sha256, size_bytes, media_type, frame? {timestamp_ns}}
+payload         PayloadRef {uri, checksum, size_bytes, media_type,
+                selector? {kind video_frame, timestamp_ns}}, the same for every
+                source
 ```
 
 - The window's clock, the frame timeline's clock and every stream's clock are
@@ -225,8 +228,11 @@ payload         ArtifactPayloadRef {kind artifact, artifact_id, checksum, size_b
   frame timeline no stream is a `transition` stream. Recording Episodes are
   asynchronous and declare none.
 - A field with `component_names` holds lists of exactly that length.
-- A `SourceFileRef` names a file of the Episode's own content; a reference to
-  any other content, or from a recording-sourced Episode, is invalid.
+- A `PayloadRef` names no source; that its URI names bytes of the Episode's own
+  source is a registration check (§5).
+- A video frame is selected by its presentation time in the video's own time
+  base (a `video_frame` selector), never by a canonical timestamp; the
+  reference's checksum and size are the whole file's.
 - Every source occurrence in the window is kept; duplicates stay separate
   occurrences; nothing is resampled, interpolated, forward-filled, padded or
   associated.
@@ -234,7 +240,8 @@ payload         ArtifactPayloadRef {kind artifact, artifact_id, checksum, size_b
   decoded. Non-finite floats are not representable and fail the build.
 - Recording observation payloads are SceneOps-owned `OBSERVATION_PAYLOAD`
   artifacts, owned by the RobotRun and shared with Scene builds of the same
-  RobotRun (same message + extraction = same artifact id). LeRobot images stay
+  RobotRun (same message + extraction = same artifact id), named by the
+  Logical URI of their key `{robot_run_id}/{artifact_id}`. LeRobot images stay
   in the preserved videos.
 - The manifest holds no DatasetVersion, episode id, status, outcome, control
   frequency, SourceSnapshot, upstream name or revision, licence or execution
@@ -263,19 +270,23 @@ result         the source (source_kind, source_id), the producer fingerprint, an
 `REGISTER_EPISODES` takes the manifest artifacts of one build (one source, one
 fingerprint) and applies the Scene registrar's gate and rules
 ([Scene domain](./scene-domain.md) §3): every manifest is read back from the
-store and verified, and every payload reference is checked by its kind:
+store and verified, and every payload reference is checked against the
+unit's own registered source, all input manifests in one batch
+(`sceneops_worker.payload_registration`):
 
 ```text
-ArtifactPayloadRef  resolves to an OBSERVATION_PAYLOAD ArtifactRecord with exactly
-                    its checksum, size and media type, whose object is present in
-                    the store with that size (one listing per payload prefix)
-SourceFileRef       names a path of the registered content's inventory with exactly
-                    its sha256 and size, and that file's object is present in the
-                    store with that size (one listing per content prefix); the
-                    files were hashed when the content was first registered
 source binding      recording: the RobotRun is registered and the manifests were
                     built from its recording bytes; content: the SourceContent is
                     registered with exactly the bound content_checksum
+recording payloads  the URI is a payload key {robot_run_id}/{artifact_id} of the
+                    unit's RobotRun, whose OBSERVATION_PAYLOAD ArtifactRecord is
+                    owned by it, stored where the URI resolves, with exactly the
+                    pinned checksum, size and media type
+content payloads    the URI names a path of the unit's own content's inventory,
+                    where the inventory places it, with exactly its sha256 and
+                    size; the files were hashed when the content was registered
+every object        present in the store with the pinned size (one listing per
+                    RobotRun or content)
 ```
 
 Units and revisions are then registered additively in one transaction, in unit
@@ -319,9 +330,9 @@ GET /api/v1/artifacts?owner_type=episode&owner_id={episode_id}
 
 Alignment, aligned validation/profiling, learning-data export and curation
 consume a pinned canonical revision; see
-[Robot learning data layer](./robot-learning-data.md). Alignment refuses an
-Episode with a `SourceFileRef` payload or a `transition` stream with an
-explicit error (`UnsupportedEpisodeContentError`) instead of dropping or
-misreading that content; the learning export and the LeRobot export read only
-aligned artifacts, so a LeRobot-sourced Episode reaches neither
-([Limitations](./limitations.md) §6).
+[Robot learning data layer](./robot-learning-data.md). Alignment carries an
+observation payload as a reference value (its Logical URI and its checksum,
+size, media type and selector), the same for every source, and reads no
+payload. It refuses an Episode with a `transition` stream with an explicit
+error (`UnsupportedEpisodeContentError`) instead of dropping or misreading
+that content ([Limitations](./limitations.md) §6).

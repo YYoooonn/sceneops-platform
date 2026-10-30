@@ -20,7 +20,12 @@ from fastapi.testclient import TestClient
 import inference_server.main as main_module
 from inference_server.config import InferenceServerSettings
 from inference_server.main import _ConcurrencyState, _WarmupState, app
-from tests.conftest import make_mock_model, make_mock_resolver, make_settings
+from tests.conftest import (
+    detect_body,
+    make_mock_model,
+    make_mock_resolver,
+    make_settings,
+)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -102,12 +107,12 @@ async def test_semaphore_serializes_concurrent_detect():
     main_module._concurrency = _ConcurrencyState(max_requests=1)
     main_module._warmup_state = _WarmupState(enabled=False)
 
-    detect_payload = {
-        "image_uri": "file:///fake/image.jpg",
-        "box_threshold": 0.35,
-        "text_threshold": 0.25,
-        "max_image_size": 800,
-    }
+    detect_payload = detect_body(
+        "file:///fake/image.jpg",
+        box_threshold=0.35,
+        text_threshold=0.25,
+        max_image_size=800,
+    )
 
     try:
         with patch("inference_server.main.get_settings", return_value=settings):
@@ -172,7 +177,7 @@ def test_active_count_zero_after_successful_detect():
         with TestClient(app, raise_server_exceptions=True) as client:
             resp = client.post(
                 "/v1/detect",
-                json={"image_uri": "file:///fake.jpg"},
+                json=detect_body("file:///fake.jpg"),
             )
             assert resp.status_code == 200
             assert main_module._concurrency.active_requests == 0
@@ -190,7 +195,7 @@ def test_active_count_zero_after_detect_exception():
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
             # RuntimeError is unhandled → 500; we just care about state recovery.
-            client.post("/v1/detect", json={"image_uri": "file:///fake.jpg"})
+            client.post("/v1/detect", json=detect_body("file:///fake.jpg"))
             assert main_module._concurrency.active_requests == 0
 
 
@@ -200,6 +205,6 @@ def test_active_count_zero_after_detect_exception():
 def test_detect_503_when_server_not_initialized(client_no_lifespan):
     resp = client_no_lifespan.post(
         "/v1/detect",
-        json={"image_uri": "file:///fake.jpg"},
+        json=detect_body("file:///fake.jpg"),
     )
     assert resp.status_code == 503

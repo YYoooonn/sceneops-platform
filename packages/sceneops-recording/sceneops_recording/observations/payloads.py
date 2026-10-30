@@ -10,7 +10,8 @@ so a Scene and an Episode built from the same RobotRun reference the same
 OBSERVATION_PAYLOAD artifact when they extract the same message the same
 way. ``channel_index`` is the message's occurrence index among its own
 topic's messages (I-34 acquisition evidence); the id depends on no build
-configuration.
+configuration. Manifests reference the payload by the Logical URI of its
+published key ``{robot_run_id}/{artifact_id}`` (``observation_payload_uri``).
 """
 
 from __future__ import annotations
@@ -20,13 +21,12 @@ import re
 from dataclasses import dataclass
 from typing import Any, Final
 
-from sceneops_core.artifacts.schemas.payload import (
-    ArtifactPayloadRef,
-    validate_media_type,
-)
+from sceneops_core.artifacts.media_types import validate_media_type
+from sceneops_core.artifacts.schemas.payload import PayloadRef
 from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.robots.recording_payload import PayloadExtraction
 from sceneops_recording import RecordingMessage
+from sceneops_recording.observations.store import observation_payload_uri
 
 OBSERVATION_PAYLOAD_ID_SCHEMA_V1: Final = "sceneops.observation_payload_id/v1"
 COMPRESSED_IMAGE_SCHEMA: Final = "sensor_msgs/msg/CompressedImage"
@@ -40,6 +40,7 @@ class RecordingBuildError(RuntimeError):
 
 @dataclass(frozen=True)
 class PlannedPayload:
+    robot_run_id: str
     artifact_id: str
     topic: str
     channel_index: int
@@ -48,9 +49,13 @@ class PlannedPayload:
     size_bytes: int
     media_type: str
 
-    def ref(self) -> ArtifactPayloadRef:
-        return ArtifactPayloadRef(
-            artifact_id=self.artifact_id,
+    def ref(self) -> PayloadRef:
+        """The manifest's reference to this payload once it is published
+        under its RobotRun."""
+        return PayloadRef(
+            uri=observation_payload_uri(
+                robot_run_id=self.robot_run_id, artifact_id=self.artifact_id
+            ),
             checksum=self.checksum,
             size_bytes=self.size_bytes,
             media_type=self.media_type,
@@ -133,6 +138,7 @@ def plan_payload(
             f"message {message.channel_index} on {message.topic!r} has an empty payload"
         )
     return PlannedPayload(
+        robot_run_id=robot_run_id,
         artifact_id=observation_payload_artifact_id(
             robot_run_id=robot_run_id,
             topic=message.topic,

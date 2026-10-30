@@ -19,7 +19,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from sceneops_core.artifacts.schemas.payload import ArtifactPayloadRef
+from sceneops_core.artifacts.logical_uri import LogicalNamespace, format_logical_uri
+from sceneops_core.artifacts.schemas.payload import PayloadRef
 from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.provenance import (
     ProducerInfo,
@@ -69,10 +70,19 @@ def event(topic: str, t: int, *, clock=None, **values) -> Occ:
     return Occ(EpisodeStreamRole.EVENT, topic, t, values, False, clock)
 
 
-def payload_ref(topic: str, rank: int) -> ArtifactPayloadRef:
-    data = f"payload:{topic}:{rank}".encode()
-    return ArtifactPayloadRef(
-        artifact_id=f"payload-{hashlib.sha256(data).hexdigest()[:32]}",
+def payload_bytes(topic: str, rank: int) -> bytes:
+    return f"payload:{topic}:{rank}".encode()
+
+
+def payload_ref(topic: str, rank: int, *, robot_run_id: str = "run-001") -> PayloadRef:
+    """A test observation payload of ``robot_run_id`` by Logical URI, at the
+    key the recording builders publish it under."""
+    data = payload_bytes(topic, rank)
+    artifact_id = f"payload-{hashlib.sha256(data).hexdigest()[:32]}"
+    return PayloadRef(
+        uri=format_logical_uri(
+            LogicalNamespace.OBSERVATION_PAYLOADS, f"{robot_run_id}/{artifact_id}"
+        ),
         checksum="sha256:" + hashlib.sha256(data).hexdigest(),
         size_bytes=len(data),
         media_type="image/jpeg",
@@ -122,7 +132,11 @@ def episode_manifest(
                     topic=topic,
                     timestamp_ns=occ.timestamp_ns,
                     values=dict(occ.values),
-                    payload=payload_ref(topic, rank) if occ.payload else None,
+                    payload=(
+                        payload_ref(topic, rank, robot_run_id=robot_run_id)
+                        if occ.payload
+                        else None
+                    ),
                 )
             )
 
@@ -168,10 +182,10 @@ def episode_manifest(
 
 def semantic_episode_content(manifest: EpisodeManifest) -> dict[str, Any]:
     """Canonical semantic content of an Episode, without provenance-owned
-    identity (robot_run_id, recording checksum, fingerprint, payload
-    artifact ids): the projection two equivalent acquisitions must share
-    when canonical time and segmentation come from source timestamps
-    (§29.12, §30.9)."""
+    identity (robot_run_id, recording checksum, fingerprint, payload URIs,
+    which name the RobotRun's payload objects): the projection two
+    equivalent acquisitions must share when canonical time and segmentation
+    come from source timestamps (§29.12, §30.9)."""
     data = manifest.model_dump(mode="json")
     source = data["lineage"]["source"]
     for occurrence in [
@@ -181,7 +195,7 @@ def semantic_episode_content(manifest: EpisodeManifest) -> dict[str, Any]:
         *data["events"],
     ]:
         if occurrence["payload"] is not None:
-            occurrence["payload"].pop("artifact_id")
+            occurrence["payload"].pop("uri")
     return {
         "build_config": data["lineage"]["producer"]["build_config"],
         "window": [
@@ -204,6 +218,7 @@ __all__ = [
     "episode_manifest",
     "event",
     "observation",
+    "payload_bytes",
     "payload_ref",
     "semantic_episode_content",
     "state",

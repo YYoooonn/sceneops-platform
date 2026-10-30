@@ -36,13 +36,14 @@ def _slug(topic: str) -> str:
 def _ref(robot_run_id: str, topic: str, row: dict[str, Any]) -> dict[str, Any]:
     p = row["payload"]
     return {
-        "kind": "artifact",
-        "artifact_id": _payload_id(
-            robot_run_id, topic, row["channel_index"], p["media_type"]
+        "uri": rules.observation_payload_uri(
+            robot_run_id,
+            _payload_id(robot_run_id, topic, row["channel_index"], p["media_type"]),
         ),
         "checksum": p["checksum"],
         "size_bytes": p["size_bytes"],
         "media_type": p["media_type"],
+        "selector": None,
     }
 
 
@@ -117,7 +118,7 @@ def scene_manifest(
         key=lambda o: (o["timestamp_ns"], o["channel"], o["observation_id"])
     )
     return {
-        "schema_version": "sceneops.scene_manifest/v4",
+        "schema_version": "sceneops.scene_manifest/v5",
         "lineage": _lineage(
             robot_run_id,
             recording_checksum,
@@ -150,7 +151,7 @@ def episode_manifest(
     exp: Any, robot_run_id: str, recording_checksum: str, build_config: dict[str, Any]
 ) -> dict[str, Any]:
     manifest: dict[str, Any] = {
-        "schema_version": "sceneops.episode_manifest/v3",
+        "schema_version": "sceneops.episode_manifest/v4",
         "lineage": _lineage(
             robot_run_id,
             recording_checksum,
@@ -158,7 +159,7 @@ def episode_manifest(
             exp.window,
             _producer(
                 "sceneops.recording_episode_builder",
-                4,
+                5,
                 build_config,
                 robot_run_id,
                 recording_checksum,
@@ -253,17 +254,13 @@ def _register(
         for row in manifest.get(role, []):
             ref = row.get("payload")
             if ref is not None:
-                obs["payloads"][ref["artifact_id"]] = {
+                payload_id = rules.payload_artifact_id_of(ref)
+                obs["payloads"][payload_id] = {
                     "artifact": {
-                        **{
-                            k: ref[k]
-                            for k in (
-                                "artifact_id",
-                                "checksum",
-                                "size_bytes",
-                                "media_type",
-                            )
-                        },
+                        **{k: ref[k] for k in ("checksum", "size_bytes", "media_type")},
+                        "artifact_id": payload_id,
+                        "uri": "s3://synthetic/observation_payloads/"
+                        f"{robot_run_id}/{payload_id}",
                         "kind": "observation_payload",
                         "owner_type": "robot_run",
                         "owner_id": robot_run_id,

@@ -18,13 +18,13 @@ from . import rules
 from .expectations import EpisodeExpectation, SceneExpectation
 from .findings import Findings
 
-SCENE_MANIFEST_SCHEMA = "sceneops.scene_manifest/v4"
-EPISODE_MANIFEST_SCHEMA = "sceneops.episode_manifest/v3"
-PAYLOAD_REF_KIND = "artifact"
+SCENE_MANIFEST_SCHEMA = "sceneops.scene_manifest/v5"
+EPISODE_MANIFEST_SCHEMA = "sceneops.episode_manifest/v4"
 MANIFEST_KIND = {"scene": "scene_manifest", "episode": "episode_manifest"}
 
 # MS-2 / scene-domain.md §1 "No membership", "No location": no manifest names a
-# DatasetVersion, a unit id, a status, a location or an execution context.
+# DatasetVersion, a unit id, a status, a location or an execution context. A
+# payload's ``uri`` is a Logical URI (ADR-016), not a location.
 FORBIDDEN_MANIFEST_KEYS = frozenset(
     {
         "dataset_id",
@@ -51,7 +51,17 @@ def _forbidden_keys(node: Any, where: str = "") -> list[str]:
             here = f"{where}.{key}" if where else key
             # build_config is the producer's own configuration (field paths are
             # configuration, not locations)
-            if key in FORBIDDEN_MANIFEST_KEYS and not where.endswith("build_config"):
+            logical = (
+                key == "uri"
+                and where.endswith("payload")
+                and isinstance(value, str)
+                and value.startswith("sceneops://")
+            )
+            if (
+                key in FORBIDDEN_MANIFEST_KEYS
+                and not where.endswith("build_config")
+                and not logical
+            ):
                 found.append(here)
             if key != "build_config":
                 found += _forbidden_keys(value, here)
@@ -662,23 +672,25 @@ def check_payloads(
     *,
     deep: bool,
 ) -> None:
-    """Every payload reference resolves to an OBSERVATION_PAYLOAD record with exactly
-    its integrity metadata, owned by the RobotRun, whose object is present with
-    that size (and, deep, those bytes). One recorded message and extraction is one
-    payload artifact, shared by every unit that references it."""
-    by_message: dict[tuple[str, int], set[str]] = {}
-    by_id: dict[str, set[tuple[str, int]]] = {}
+    """Every payload reference is a PayloadRef naming, by Logical URI, a payload
+    key ``<robot_run_id>/<id>`` of this RobotRun; that id resolves to an
+    OBSERVATION_PAYLOAD record with exactly the reference's integrity metadata,
+    owned by the RobotRun and stored at that key, whose object is present with
+    that size (and, deep, those bytes). One recorded message and extraction is
+    one payload artifact, shared by every unit that references it."""
+    by_message: dict[tuple[str, int], set[str | None]] = {}
+    by_id: dict[str | None, set[tuple[str, int]]] = {}
     for item in refs:
-        ref = item["ref"] or {}
+        payload_id = rules.payload_artifact_id_of(item["ref"])
         key = (item["topic"], item["channel_index"])
-        by_message.setdefault(key, set()).add(ref.get("artifact_id"))
-        by_id.setdefault(ref.get("artifact_id"), set()).add(key)
-    for artifact_id, messages in by_id.items():
+        by_message.setdefault(key, set()).add(payload_id)
+        by_id.setdefault(payload_id, set()).add(key)
+    for payload_id, messages in by_id.items():
         f.equal(
             len(messages),
             1,
             "payload_identity",
-            f"payload {artifact_id} is referenced for {len(messages)} messages",
+            f"payload {payload_id} is referenced for {len(messages)} messages",
         )
     for key, ids in by_message.items():
         f.equal(
@@ -690,21 +702,30 @@ def check_payloads(
     checked = set()
     for item in refs:
         ref = item["ref"] or {}
-        artifact_id = ref.get("artifact_id")
-        if artifact_id in checked:
+        uri = ref.get("uri")
+        if uri in checked:
             continue
-        checked.add(artifact_id)
+        checked.add(uri)
         f.equal(
-            ref.get("kind"),
-            PAYLOAD_REF_KIND,
+            sorted(ref),
+            sorted(rules.PAYLOAD_REF_FIELDS),
             "payload_ref",
-            f"payload {artifact_id} reference kind",
+            f"payload {uri} reference fields",
         )
-        entry = obs["payloads"].get(artifact_id)
+        f.equal(ref.get("selector"), None, "payload_ref", f"payload {uri} selector")
+        key = rules.logical_key(uri, rules.OBSERVATION_PAYLOADS)
+        run, _, payload_id = (key or "").partition("/")
+        if not f.check(
+            key is not None and run == robot_run_id and "/" not in payload_id,
+            "payload_ref",
+            f"payload {uri!r} is not a payload key of RobotRun {robot_run_id}",
+        ):
+            continue
+        entry = obs["payloads"].get(payload_id)
         if not f.check(
             entry is not None,
             "payload_record_missing",
-            f"payload {artifact_id} has no ArtifactRecord",
+            f"payload {payload_id} has no ArtifactRecord",
         ):
             continue
         record = entry["artifact"]
@@ -729,27 +750,33 @@ def check_payloads(
                 "owner_id": robot_run_id,
             },
             "payload_record",
-            f"payload record {artifact_id}",
+            f"payload record {payload_id}",
+        )
+        f.check(
+            str(record.get("uri", "")).endswith(f"/{key}"),
+            "payload_record",
+            f"payload record {payload_id} is stored at {record.get('uri')!r}, not at "
+            f"its key {key!r}",
         )
         stored = entry.get("object")
         if not f.check(
             stored is not None,
             "payload_object_missing",
-            f"payload {artifact_id} object is not in the store",
+            f"payload {payload_id} object is not in the store",
         ):
             continue
         f.equal(
             stored.get("size_bytes"),
             ref.get("size_bytes"),
             "payload_object_size",
-            f"payload {artifact_id} object size",
+            f"payload {payload_id} object size",
         )
         if deep:
             f.equal(
                 stored.get("checksum"),
                 ref.get("checksum"),
                 "payload_object_checksum",
-                f"payload {artifact_id} stored bytes",
+                f"payload {payload_id} stored bytes",
             )
 
 

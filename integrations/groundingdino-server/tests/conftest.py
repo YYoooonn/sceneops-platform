@@ -12,6 +12,15 @@ from inference_server.config import InferenceServerSettings
 from inference_server.main import app
 
 
+# A well-formed pin, for endpoint tests whose resolver is mocked.
+PIN = {"image_checksum": "sha256:" + "0" * 64, "image_size_bytes": 0}
+
+
+def detect_body(image_uri: str, **fields) -> dict:
+    """A /v1/detect request body for ``image_uri`` with a well-formed pin."""
+    return {"image_uri": image_uri, **PIN, **fields}
+
+
 def make_settings(**overrides) -> InferenceServerSettings:
     """Build InferenceServerSettings with test-safe defaults."""
     defaults = dict(

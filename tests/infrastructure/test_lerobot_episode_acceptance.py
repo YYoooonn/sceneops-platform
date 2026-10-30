@@ -16,6 +16,7 @@ measurements are printed as one ``lerobot_episode_measurements`` JSON line.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -432,6 +433,87 @@ def test_alignment_refuses_a_pusht_episode(api: Api, full_run: dict) -> None:
     )
     assert job["status"] == "failed"
     assert "transition streams" in json.dumps(job["error"]), job["error"]
+
+
+def test_an_episode_built_without_transitions_aligns_its_video_frame_references(
+    api: Api, snapshot_a: dict
+) -> None:
+    """The same pinned content built without its transition features (``next.*``):
+    alignment accepts the Episode and carries each video-frame PayloadRef whole --
+    uri, checksum, size, media type and selector. References are aligned; no
+    frame is decoded."""
+    from sceneops_core.episodes.alignment.persistence import AlignedEpisodeArtifact
+    from sceneops_core.episodes.alignment.semantics import ALIGNMENT_SEMANTICS_VERSION
+    from sceneops_core.episodes.schemas.manifests import load_canonical_episode_manifest
+
+    features = [f for f in BUILD_CONFIG["features"] if f["role"] != "transition"]
+    api.dataset(DATASET)
+    run = api.run(
+        "snapshot_episode_building",
+        {
+            "build_snapshot_episodes": {
+                "snapshot_id": snapshot_a["snapshot_id"],
+                "build_config": {**BUILD_CONFIG, "features": features},
+                "unit_keys": ["0"],
+            },
+            "compose_dataset_version": {
+                "dataset_id": DATASET,
+                "dataset_version": "pusht-0-no-transitions",
+            },
+        },
+    )
+    assert run["status"] == "succeeded", run
+    (member,) = api.members("episodes", DATASET, "pusht-0-no-transitions")
+    record = api.get(f"/artifacts/{member['manifestArtifactId']}")["artifact"]
+    manifest = load_canonical_episode_manifest(
+        asyncio.run(_store().read_bytes(record["uri"]))
+    )
+    assert manifest.transitions == []
+    # Every frame is a selector into one MP4 object: a pin is (uri, metadata) by frame time.
+    pins = {
+        (o.topic, o.timestamp_ns): (o.payload.uri, o.payload.model_dump(mode="json", exclude={"uri"}, exclude_none=True))
+        for o in manifest.observations
+        if o.payload is not None
+    }  # fmt: skip
+    assert pins and all(m["selector"]["kind"] == "video_frame" for _, m in pins.values())
+
+    job = _job(
+        api,
+        "align_episode",
+        {
+            "episodes": [
+                {
+                    "episode_id": member["episodeId"],
+                    "source_artifact_id": member["manifestArtifactId"],
+                    "source_manifest_sha256": member["manifestChecksum"].removeprefix("sha256:"),
+                }
+            ],
+            "dataset_id": DATASET,
+            "dataset_version": "pusht-0-no-transitions",
+            # pusht's 10 fps grid; half a frame period finds each frame's reference.
+            "alignment_config": {"target_frequency_hz": 10.0, "tolerance_us": 50_000, "max_gap_us": 200_000},
+        },
+    )  # fmt: skip
+    assert job["status"] == "succeeded", job.get("error")
+    (ref,) = job["result"]["aligned"]
+    aligned = AlignedEpisodeArtifact.model_validate(
+        json.loads(asyncio.run(_store().read_bytes(ref["aligned_artifact_uri"])))
+    ).aligned_episode
+    assert aligned.alignment_semantics_version == ALIGNMENT_SEMANTICS_VERSION == "v3"
+    references = [
+        s
+        for step in aligned.steps
+        for s in step.observations.values()
+        if s.value is not None and s.value.reference_uri is not None
+    ]
+    assert references
+    for signal in references:
+        value = signal.value
+        frame = (value.reference_channel, signal.source_timestamp_us * 1000)
+        assert pins[frame] == (value.reference_uri, value.reference_metadata)
+    assert len({json.dumps(s.value.reference_metadata, sort_keys=True) for s in references}) == len(references)
+    MEASUREMENTS["aligned_video_references"] = len(references)
+    MEASUREMENTS["aligned_steps"] = aligned.step_count
 
 
 def test_measurements_are_reported(capsys) -> None:

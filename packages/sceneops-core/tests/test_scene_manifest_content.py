@@ -1,9 +1,9 @@
-"""SceneManifest v4: the content variant (ADR-015 §6.5, §6.6).
+"""SceneManifest v5: the content variant (ADR-015 §6.5, §6.6; ADR-017).
 
 A Scene binds to a recording segment or to a native unit of a SourceContent;
-a preserved-file payload names a file of the Scene's own content; native
-identifiers are verbatim and name one observation or one group; the loader
-reads v4 only.
+a preserved file is referenced in place by its sources Logical URI, the same
+PayloadRef a recording payload is; native identifiers are verbatim and name
+one observation or one group; the loader reads v5 only.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from sceneops_core.artifacts.schemas import SourceFileRef
+from sceneops_core.artifacts.logical_uri import LogicalNamespace, format_logical_uri
+from sceneops_core.artifacts.schemas import PayloadRef
 from sceneops_core.provenance import ContentUnitSource, manifest_artifact_id_for
 from sceneops_core.scenes.schemas import (
     SceneManifest,
@@ -44,10 +45,11 @@ def _content_source(unit_key: str = "cc8c0bf57f984915a77078b10eb33198"):
 
 
 def _file_ref(path: str, *, content_id: str = CONTENT_ID) -> dict:
-    return SourceFileRef(
-        content_id=content_id,
-        path=path,
-        sha256="sha256:" + hashlib.sha256(path.encode()).hexdigest(),
+    return PayloadRef(
+        uri=format_logical_uri(
+            LogicalNamespace.SOURCES, f"contents/{content_id}/files/{path}"
+        ),
+        checksum="sha256:" + hashlib.sha256(path.encode()).hexdigest(),
         size_bytes=len(path),
         media_type="image/jpeg",
     ).model_dump(mode="json")
@@ -67,13 +69,18 @@ def test_a_content_scene_references_files_of_its_own_content():
     payload = _with_file_refs(_payload(build_scene_manifest(source=_content_source())))
     manifest = SceneManifest.model_validate(payload)
     assert manifest.lineage.source.source_id == CONTENT_ID
-    assert {o.payload.kind for o in manifest.observations} == {"source_file"}
+    assert {o.payload.logical_uri().namespace for o in manifest.observations} == {
+        LogicalNamespace.SOURCES
+    }
     data = manifest.to_canonical_bytes()
     assert load_canonical_scene_manifest(data) == manifest
 
 
 @pytest.mark.parametrize("scene_source", ["recording", "other_content"])
-def test_a_file_of_another_source_is_a_wrong_binding(scene_source):
+def test_whose_bytes_a_uri_names_is_not_decided_by_the_schema(scene_source):
+    """The schema validates the reference itself; that it names bytes of the
+    Scene's own source is checked where the revision is registered
+    (sceneops_worker.payload_registration)."""
     if scene_source == "recording":
         payload = _with_file_refs(_payload(build_scene_manifest()))
     else:
@@ -81,8 +88,7 @@ def test_a_file_of_another_source_is_a_wrong_binding(scene_source):
             _payload(build_scene_manifest(source=_content_source())),
             content_id=content_id_for(OTHER_CHECKSUM),
         )
-    with pytest.raises(ValidationError, match="not of the Scene's own source"):
-        SceneManifest.model_validate(payload)
+    SceneManifest.model_validate(payload)
 
 
 @pytest.mark.parametrize("structure", ["observations", "groups"])
@@ -99,14 +105,17 @@ def test_a_native_identifier_names_one_structure(structure):
 
 def test_a_recording_scene_serializes_absent_native_refs():
     payload = _payload(build_scene_manifest())
-    assert payload["schema_version"] == "sceneops.scene_manifest/v4"
+    assert payload["schema_version"] == "sceneops.scene_manifest/v5"
     assert {o["native_ref"] for o in payload["observations"]} == {None}
     assert {g["native_ref"] for g in payload["groups"]} == {None}
 
 
-def test_v3_bytes_are_not_read():
+@pytest.mark.parametrize(
+    "version", ["sceneops.scene_manifest/v3", "sceneops.scene_manifest/v4"]
+)
+def test_earlier_versions_are_not_read(version):
     payload = _payload(build_scene_manifest())
-    payload["schema_version"] = "sceneops.scene_manifest/v3"
+    payload["schema_version"] = version
     with pytest.raises(UnsupportedSceneManifestVersionError):
         load_canonical_scene_manifest(json.dumps(payload).encode())
 

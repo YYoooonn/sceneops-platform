@@ -90,7 +90,7 @@ class PinnedRecording(_PinnedModel):
 
 class PinnedContent(_PinnedModel):
     """A registered SourceContent, by its inventory: the file list every
-    ``SourceFileRef`` a builder emits must match."""
+    preserved-file reference a builder emits must match."""
 
     inventory: SourceContentInventory
 

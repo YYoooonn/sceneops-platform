@@ -17,8 +17,7 @@ class ClockMismatchError(AlignmentError):
 
 
 class UnsupportedEpisodeContentError(AlignmentError):
-    """The Episode holds content this alignment cannot represent: a
-    preserved-file payload reference (``SourceFileRef``) or a per-frame
+    """The Episode holds content this alignment cannot represent: a per-frame
     ``transition`` stream. It is refused explicitly instead of being aligned
     with that content silently dropped or misread (M3.0 D14)."""
 

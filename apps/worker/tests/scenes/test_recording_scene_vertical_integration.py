@@ -35,6 +35,7 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
 from sceneops_db.session import get_async_sessionmaker
+from sceneops_worker.payloads import payload_reader
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.core.dependencies import create_worker_context
 from sceneops_worker.datasets.composition import compose_dataset_version
@@ -197,14 +198,17 @@ async def test_robot_run_to_registered_validated_scenes(vertical):
             manifest = await ctx.scene_artifact_store.read_pinned_manifest(
                 uri=manifest_record.uri, checksum=scene.manifest_checksum
             )
+            reader = payload_reader(ctx)
             for observation in manifest.observations:
+                # The Logical URI resolves to the published payload object its
+                # record registers, and reads back verified.
+                ref = observation.payload
                 record = await ctx.artifact_record_store.get(
-                    observation.payload.artifact_id
+                    ref.logical_uri().key.rpartition("/")[2]
                 )
-                data = await ctx.artifact_store.read_bytes(record.uri)
-                assert "sha256:" + hashlib.sha256(data).hexdigest() == (
-                    observation.payload.checksum
-                )
+                assert reader.resolver.resolve(ref.uri) == record.uri
+                data = await reader.read(ref)
+                assert "sha256:" + hashlib.sha256(data).hexdigest() == ref.checksum
 
     scene_ids = registered.scene_ids
     validated = await vertical.run(

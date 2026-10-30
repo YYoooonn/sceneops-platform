@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from sceneops_inference.detection.grounding_dino import _call_inference_server
 
+CHECKSUM = "sha256:" + "ab" * 32
+
 
 # ── _call_inference_server ────────────────────────────────────────────────────
 
@@ -19,7 +21,7 @@ async def test_request_payload_contains_image_uri():
     async def fake_post(url, *, json=None, **kwargs):
         captured.append(json or {})
         resp = MagicMock()
-        resp.raise_for_status = MagicMock()
+        resp.is_error = False
         resp.json.return_value = {"detections": []}
         return resp
 
@@ -30,6 +32,8 @@ async def test_request_payload_contains_image_uri():
         client=client,
         endpoint_url="http://sceneops-inference:8001",
         image_uri=image_uri,
+        image_checksum=CHECKSUM,
+        image_size_bytes=123,
         box_threshold=0.35,
         text_threshold=0.25,
         max_image_size=800,
@@ -39,6 +43,8 @@ async def test_request_payload_contains_image_uri():
     assert len(captured) == 1
     payload = captured[0]
     assert payload["image_uri"] == image_uri
+    assert payload["image_checksum"] == CHECKSUM
+    assert payload["image_size_bytes"] == 123
 
 
 async def test_request_payload_does_not_contain_image_path():
@@ -48,7 +54,7 @@ async def test_request_payload_does_not_contain_image_path():
     async def fake_post(url, *, json=None, **kwargs):
         captured.append(json or {})
         resp = MagicMock()
-        resp.raise_for_status = MagicMock()
+        resp.is_error = False
         resp.json.return_value = {"detections": []}
         return resp
 
@@ -59,6 +65,8 @@ async def test_request_payload_does_not_contain_image_path():
         client=client,
         endpoint_url="http://sceneops-inference:8001",
         image_uri="file:///data/raw/img.jpg",
+        image_checksum=CHECKSUM,
+        image_size_bytes=123,
         box_threshold=0.35,
         text_threshold=0.25,
         max_image_size=800,
@@ -75,7 +83,7 @@ async def test_request_payload_includes_thresholds_and_prompt():
     async def fake_post(url, *, json=None, **kwargs):
         captured.append(json or {})
         resp = MagicMock()
-        resp.raise_for_status = MagicMock()
+        resp.is_error = False
         resp.json.return_value = {"detections": []}
         return resp
 
@@ -86,6 +94,8 @@ async def test_request_payload_includes_thresholds_and_prompt():
         client=client,
         endpoint_url="http://sceneops-inference:8001",
         image_uri="file:///data/raw/img.jpg",
+        image_checksum=CHECKSUM,
+        image_size_bytes=123,
         box_threshold=0.4,
         text_threshold=0.3,
         max_image_size=640,
@@ -105,7 +115,7 @@ async def test_request_omits_prompt_when_none():
     async def fake_post(url, *, json=None, **kwargs):
         captured.append(json or {})
         resp = MagicMock()
-        resp.raise_for_status = MagicMock()
+        resp.is_error = False
         resp.json.return_value = {"detections": []}
         return resp
 
@@ -116,6 +126,8 @@ async def test_request_omits_prompt_when_none():
         client=client,
         endpoint_url="http://sceneops-inference:8001",
         image_uri="file:///data/raw/img.jpg",
+        image_checksum=CHECKSUM,
+        image_size_bytes=123,
         box_threshold=0.35,
         text_threshold=0.25,
         max_image_size=800,

@@ -32,8 +32,8 @@ class ArtifactKind(StrEnum):
     # Observation-level
     # Immutable bytes of one canonical observation (an image, a point
     # cloud, ...), extracted from a registered recording and referenced
-    # from canonical manifests by artifact id
-    # (sceneops_core.artifacts.schemas.payload.PayloadRef).
+    # from canonical manifests by Logical URI (PayloadRef, see
+    # sceneops_core.artifacts.schemas.payload).
     OBSERVATION_PAYLOAD = "observation_payload"
 
     # Scene-level

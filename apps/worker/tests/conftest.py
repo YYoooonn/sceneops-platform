@@ -22,7 +22,11 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
-from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
+from sceneops_core.artifacts.schemas import (
+    ArtifactKind,
+    ArtifactOwnerType,
+    ArtifactRecord,
+)
 from sceneops_core.artifacts.schemas.enums import ArtifactBackend
 from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.robots.schemas import RobotRunRecord
@@ -193,15 +197,17 @@ class SceneWorld:
     ArtifactStore, with in-memory record stores."""
 
     def __init__(self, root) -> None:
+        from sceneops_core.config import ArtifactSettings
         from sceneops_storage.backends.local import LocalArtifactStore
         from sceneops_scenes.artifacts import SceneArtifactStore
 
         self.root = str(root)
+        self.settings = ArtifactSettings(root_uri=self.root)
         self.artifact_store = LocalArtifactStore(root_uri=self.root)
         self.scene_artifact_store = SceneArtifactStore(
             artifact_store=self.artifact_store,
             canonical_root_uri=f"{self.root}/canonical",
-            payload_root_uri=f"{self.root}/observation_payloads",
+            payload_root_uri=self.settings.observation_payload_root_uri,
         )
         self.artifacts: dict = {}
         self.scenes = _StagedSceneStore()
@@ -216,6 +222,7 @@ class SceneWorld:
 
     def _build_context(self) -> MagicMock:
         ctx = MagicMock()
+        ctx.settings.artifact = self.settings
         ctx.settings.artifact_root_uri = self.root
         ctx.settings.run_root_uri = f"{self.root}/runs"
         ctx.artifact_store = self.artifact_store
@@ -327,33 +334,33 @@ class SceneWorld:
 
         return build_scene_manifest(**kwargs)
 
-    @property
-    def payload_locator(self):
-        from sceneops_worker.payloads import PayloadLocator
+    def payload_uri(self, ref) -> str:
+        """Where the recording builders store the payload ``ref`` names."""
+        from sceneops_storage import PayloadUriResolver
 
-        return PayloadLocator(self.context)
-
-    def payload_uri(self, artifact_id: str) -> str:
-        return f"{self.root}/payloads/{artifact_id}"
+        return PayloadUriResolver.from_settings(self.settings).resolve(ref.uri)
 
     async def register_payloads(self, manifest) -> None:
         """Store each observation's payload bytes and register its
-        OBSERVATION_PAYLOAD ArtifactRecord, as a producer does."""
+        OBSERVATION_PAYLOAD ArtifactRecord, owned by the Scene's RobotRun,
+        as a recording build does."""
         from sceneops_core.scenes.testing import payload_bytes
 
         for observation in manifest.observations:
             ref = observation.payload
+            run_id, artifact_id = ref.logical_uri().key.split("/")
             await self.artifact_store.write_bytes(
-                self.payload_uri(ref.artifact_id),
-                payload_bytes(observation.observation_id),
+                self.payload_uri(ref), payload_bytes(observation.observation_id)
             )
-            self.artifacts[ref.artifact_id] = ArtifactRecord(
-                artifact_id=ref.artifact_id,
+            self.artifacts[artifact_id] = ArtifactRecord(
+                artifact_id=artifact_id,
                 kind=ArtifactKind.OBSERVATION_PAYLOAD,
-                uri=self.payload_uri(ref.artifact_id),
+                uri=self.payload_uri(ref),
                 media_type=ref.media_type,
                 size_bytes=ref.size_bytes,
                 checksum=ref.checksum,
+                owner_type=ArtifactOwnerType.ROBOT_RUN,
+                owner_id=run_id,
             )
 
     async def publish(self, manifest, *, kind=None, with_payloads: bool = True):

@@ -11,6 +11,11 @@ and the snapshot id from the declaration, so files are stored once per content
 however many snapshots declare it. A content file's location is derived from
 its inventory's location (D4), and a descriptor's location names its root and
 its snapshot (D11), so a reader needs no root setting of its own.
+
+Canonical manifests reference a preserved file in place, by the Logical URI of
+its key relative to the sources root (``content_file_payload_ref``, ADR-016);
+registration accepts that URI only when it resolves to exactly where the
+content's registered inventory places the file.
 """
 
 from __future__ import annotations
@@ -18,7 +23,10 @@ from __future__ import annotations
 from typing import Final
 
 from sceneops_core.artifacts.contracts import ArtifactStore
+from sceneops_core.artifacts.logical_uri import LogicalNamespace, format_logical_uri
+from sceneops_core.artifacts.schemas import PayloadRef, PayloadSelector
 from sceneops_core.sources import (
+    SourceFileEntry,
     validate_content_id,
     validate_snapshot_id,
     validate_source_path,
@@ -91,6 +99,37 @@ def content_files_prefix(inventory_uri: str) -> str:
     return f"{inventory_uri[: -len(INVENTORY_OBJECT_NAME)]}{FILES_SEGMENT}"
 
 
+def content_file_key(content_id: str, path: str) -> str:
+    """A content file's object key relative to the sources root,
+    ``contents/{content_id}/files/{path}``: the layout ``inventory_uri`` and
+    ``content_file_uri`` place it at."""
+    validate_content_id(content_id)
+    validate_source_path(path)
+    return f"{CONTENTS_SEGMENT}/{content_id}/{FILES_SEGMENT}/{path}"
+
+
+def content_file_payload_ref(
+    content_id: str,
+    entry: SourceFileEntry,
+    *,
+    media_type: str,
+    selector: PayloadSelector | None = None,
+) -> PayloadRef:
+    """The reference to one preserved file of ``content_id`` as its inventory
+    ``entry`` pins it (sha256, size), read in place: nothing is copied. The
+    inventory records no media type, so it is the builder's assertion from
+    source-format evidence, as is a selector (D3)."""
+    return PayloadRef(
+        uri=format_logical_uri(
+            LogicalNamespace.SOURCES, content_file_key(content_id, entry.path)
+        ),
+        checksum=entry.sha256,
+        size_bytes=entry.size_bytes,
+        media_type=media_type,
+        selector=selector,
+    )
+
+
 def parse_descriptor_uri(uri: str) -> tuple[str, str]:
     """``(sources_root, snapshot_id)`` of a descriptor URI, which must be
     ``{sources_root}/snapshots/{snapshot_id}/descriptor.json`` (D11). Whether
@@ -111,6 +150,8 @@ __all__ = [
     "DESCRIPTOR_OBJECT_NAME",
     "INVENTORY_OBJECT_NAME",
     "SourceLayoutError",
+    "content_file_key",
+    "content_file_payload_ref",
     "content_file_uri",
     "content_files_prefix",
     "content_id_of_inventory_uri",

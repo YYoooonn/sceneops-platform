@@ -1,8 +1,8 @@
 """Content-sourced Scenes on real PostgreSQL and real MinIO (ADR-015 §4,
 §6.4–§6.7, §7; M3.0 D2, D3, D5): BUILD_SNAPSHOT_SCENES from a registered
-SourceSnapshot, REGISTER_SCENES through the SourceFileRef gate,
-COMPOSE_DATASET_VERSION of the revisions without any RobotRun, and the payload
-locator resolving preserved files.
+SourceSnapshot, REGISTER_SCENES through the payload registration gate,
+COMPOSE_DATASET_VERSION of the revisions without any RobotRun, and verified
+reads of the preserved files the Scenes reference in place.
 
 Each test preserves its own synthetic nuScenes v1.0 tree (its LICENSE carries
 the test's id, so its content is its own) under its own declaration.
@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
+from sceneops_core.artifacts.logical_uri import LogicalNamespace, format_logical_uri
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactOwnerType, ArtifactRef
 from sceneops_core.datasets.schemas import DatasetRecord
 from sceneops_core.jobs.schemas import (
@@ -40,6 +41,7 @@ from sceneops_sources.nuscenes_synthetic import (
     token,
     write_nuscenes_tree,
 )
+from sceneops_storage import PayloadVerificationError
 from sceneops_storage.backends.s3 import S3ArtifactStore
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.core.dependencies import create_worker_context
@@ -48,8 +50,7 @@ from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset.build_snapshot_scenes import (
     BuildSnapshotScenesJobHandler,
 )
-from sceneops_worker.payloads import PayloadLocator
-from sceneops_worker.recordings.payload_refs import PayloadIntegrityError
+from sceneops_worker.payloads import payload_reader, payload_uri_resolver
 from sceneops_worker.scenes.registration import (
     SceneManifestRejectedError,
     SceneRegistrationScopeError,
@@ -256,7 +257,15 @@ async def test_snapshot_build_registers_and_composes_without_a_robot_run(env):
     )
 
 
-async def test_the_payload_locator_resolves_preserved_files(env):
+def _path(content_id: str, ref) -> str:
+    """The inventory path a preserved-file reference names."""
+    prefix = f"contents/{content_id}/files/"
+    key = ref.logical_uri().key
+    assert key.startswith(prefix), key
+    return key[len(prefix) :]
+
+
+async def test_registered_preserved_files_read_verified_in_place(env):
     snapshot_id, content_id = await env.snapshot()
     built = await env.build(snapshot_id, unit_keys=[token("scene", 0)])
     await env.register(built.manifest_artifact_ids)
@@ -264,20 +273,26 @@ async def test_the_payload_locator_resolves_preserved_files(env):
     refs = [o.payload for o in manifest.observations]
     async with get_async_sessionmaker()() as session:
         context = env.context(session)
-        uris = await PayloadLocator(context).uris(refs)
         content = await context.source_store.get_content(content_id)
         inventory = await context.artifact_record_store.get(
             content.inventory_artifact_id
         )
-        assert uris == {r: content_file_uri(inventory.uri, r.path) for r in refs}
+        resolver = payload_uri_resolver(context)
+        # Every reference is the sources Logical URI of the file the content
+        # preserved, resolving to the very object publish-snapshot stored:
+        # nothing was copied.
+        for ref in refs:
+            path = _path(content_id, ref)
+            assert ref.uri == format_logical_uri(
+                LogicalNamespace.SOURCES, f"contents/{content_id}/files/{path}"
+            )
+            assert resolver.resolve(ref.uri) == content_file_uri(inventory.uri, path)
         camera = next(r for r in refs if r.media_type == "image/jpeg")
-        assert (
-            await env.store.read_bytes(uris[camera])
-            == (env.root / camera.path).read_bytes()
-        )
+        expected = (env.root / _path(content_id, camera)).read_bytes()
+        assert await payload_reader(context).read(camera) == expected
         forged = camera.model_copy(update={"size_bytes": camera.size_bytes + 1})
-        with pytest.raises(PayloadIntegrityError, match="inventory pins"):
-            await PayloadLocator(context).uris([forged])
+        with pytest.raises(PayloadVerificationError):
+            await payload_reader(context).read(forged)
 
 
 async def test_build_refusals_write_nothing(env, tmp_path):
@@ -329,12 +344,12 @@ async def _republish(env, manifest) -> str:
         return artifact_id
 
 
-async def test_a_source_file_ref_that_differs_from_the_inventory_is_rejected(env):
+async def test_a_file_reference_that_differs_from_the_inventory_is_rejected(env):
     snapshot_id, content_id = await env.snapshot()
     built = await env.build(snapshot_id, unit_keys=[token("scene", 1)])
     _, manifest = await env.manifest(built.manifest_artifact_ids[0])
     document = json.loads(manifest.to_canonical_bytes())
-    document["observations"][0]["payload"]["sha256"] = "sha256:" + "0" * 64
+    document["observations"][0]["payload"]["checksum"] = "sha256:" + "0" * 64
     forged = type(manifest).model_validate(document)
     with pytest.raises(SceneManifestRejectedError, match="inventory pins"):
         await env.register([await _republish(env, forged)])
@@ -351,8 +366,10 @@ async def test_a_referenced_content_object_missing_from_minio_is_rejected(env):
             content.inventory_artifact_id
         )
     lidar = next(o for o in manifest.observations if o.channel == "LIDAR_TOP")
-    await env.store.delete_prefix(content_file_uri(inventory.uri, lidar.payload.path))
-    with pytest.raises(SceneManifestRejectedError, match="not stored"):
+    await env.store.delete_prefix(
+        content_file_uri(inventory.uri, _path(content_id, lidar.payload))
+    )
+    with pytest.raises(SceneManifestRejectedError, match="has no object at"):
         await env.register(built.manifest_artifact_ids)
     assert (await env.counts(content_id))["revisions"] == 0
 
@@ -384,8 +401,10 @@ async def test_a_binding_to_unregistered_content_is_out_of_scope(env):
         "source": source.model_dump(mode="json"),
         "producer": producer.model_dump(mode="json"),
     }
+    own_id = manifest.lineage.source.content_id
     for observation in document["observations"]:
-        observation["payload"]["content_id"] = other_id
+        payload = observation["payload"]
+        payload["uri"] = payload["uri"].replace(own_id, other_id)
     rebound = type(manifest).model_validate(document)
     with pytest.raises(SceneRegistrationScopeError, match="not registered"):
         await env.register([await _republish(env, rebound)])

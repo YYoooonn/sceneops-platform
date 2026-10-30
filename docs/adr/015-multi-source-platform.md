@@ -84,6 +84,19 @@ import fails when a selected sample's key-frame file is not preserved. The
 RobotRun labels as `recording` without `group_ref`; its locked reference label artifacts
 carry no anchor and are unchanged.
 
+**Amended (2026-10-29, R3).** [ADR-017](./017-unified-payload-ref-and-versioned-manifests.md)
+adds a source-independent `PayloadRef` (Logical URI, checksum, size, media type,
+selector) for `sceneops.scene_manifest/v5` and `sceneops.episode_manifest/v4`. The §6.5
+union stays the payload contract of Scene v4 and Episode v3, which remain readable
+byte for byte. Builders and registration keep the legacy versions until ADR-017's
+required changes land.
+
+**Amended (2026-10-30, R4).** The §6.5 union is retired: every builder emits
+`PayloadRef` (Scene v5, Episode v4), registration verifies it against the unit's own
+source, and the legacy versions are no longer read
+([ADR-017](./017-unified-payload-ref-and-versioned-manifests.md), R4 cutover). The
+own-content rule of §6.5 is enforced by registration, not the schema.
+
 This ADR supersedes, in
 [ADR-007](./007-canonical-ingestion-architecture.md) Amendment A4, decisions 1, 3, 4 and 5 of
 §29.2 and invariants I-31 and I-36. It amends I-1, I-2, I-10, I-16 and I-17 and retires

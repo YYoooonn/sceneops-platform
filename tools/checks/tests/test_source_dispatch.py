@@ -39,10 +39,13 @@ def test_the_repository_dispatches_on_source_only_where_allowed():
         "def f(m):\n    return m.lineage.source.source_kind == 'content'\n",
         "def f(record):\n    if record.source_kind != 'recording':\n        return 1\n",
         "def f(unit):\n    return ('recording', unit.robot_run_id) == unit.key\n",
-        "def f(ref):\n    return isinstance(ref, SourceFileRef)\n",
-        "def f(ref):\n    return isinstance(ref, (ArtifactPayloadRef, int))\n",
+        "def f(src):\n    return isinstance(src, PinnedContent)\n",
+        "def f(src):\n    return isinstance(src, (RecordingSegmentSource, int))\n",
         "def f(src):\n    match src:\n        case ContentUnitSource():\n            return 1\n",
-        "def f(ref):\n    return ref.kind == 'source_file'\n",
+        "def f(ref):\n    return ref.logical_uri().namespace == LogicalNamespace.SOURCES\n",
+        "def f(u):\n    return u.namespace != 'observation-payloads'\n",
+        "def f(ref):\n    return ref.uri.startswith('sceneops://sources/')\n",
+        "def f(ref):\n    return ref.uri[:19] == 'sceneops://sources/'\n",
         "def f(snapshot):\n    return snapshot.format == 'nuscenes'\n",
         "READERS = {'lerobot': 1, 'nuscenes': 2}\n",
     ],
@@ -113,7 +116,7 @@ def test_upstream_modules_and_listed_sites_are_allowed(tmp_path):
         tmp_path,
         {
             "packages/sceneops-up/sceneops_up/builder.py": "X = {'nuscenes': 1}\n",
-            CONSUMER: "class L:\n    def uris(self, r):\n        return isinstance(r, SourceFileRef)\n",
+            CONSUMER: "class L:\n    def uris(self, r):\n        return isinstance(r, PinnedContent)\n",
             "packages/sceneops-x/tests/test_consumer.py": "Y = {'lerobot': 1}\n",
         },
     )
@@ -137,7 +140,7 @@ def test_a_listed_site_that_no_longer_exists_is_reported(tmp_path):
 
 
 def test_a_site_moved_to_another_function_is_not_covered_by_the_listing(tmp_path):
-    body = "def g(ref):\n    return isinstance(ref, SourceFileRef)\n"
+    body = "def g(src):\n    return isinstance(src, PinnedContent)\n"
     root = _repo(tmp_path, {CONSUMER: body})
     violations = dispatch.check(
         root, upstream={}, downstream={(CONSUMER, "f"): "x"}, identity={}

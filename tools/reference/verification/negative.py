@@ -149,7 +149,7 @@ def _shift_1ns(obs, ctx):
 def _payload_byte_in_store(obs, ctx):
     revision, manifest = _manifest_of(obs, "scene", _first(obs, "scene", ctx["run_id"]))
     ref = manifest["observations"][0]["payload"]
-    obs["payloads"][ref["artifact_id"]]["object"]["checksum"] = rules.checksum(
+    obs["payloads"][rules.payload_artifact_id_of(ref)]["object"]["checksum"] = rules.checksum(
         b"changed byte"
     )
 
@@ -161,7 +161,7 @@ def _payload_rebound(obs, ctx):
 
     def mutate(m):
         ref = m["observations"][0]["payload"]
-        entry = obs["payloads"][ref["artifact_id"]]
+        entry = obs["payloads"][rules.payload_artifact_id_of(ref)]
         entry["artifact"]["checksum"] = entry["object"]["checksum"] = ref[
             "checksum"
         ] = other
@@ -390,9 +390,8 @@ def _dataset_field(obs, ctx):
 
 def _payload_object_missing(obs, ctx):
     _, manifest = _manifest_of(obs, "scene", _first(obs, "scene", ctx["run_id"]))
-    obs["payloads"][manifest["observations"][-1]["payload"]["artifact_id"]][
-        "object"
-    ] = None
+    payload = manifest["observations"][-1]["payload"]
+    obs["payloads"][rules.payload_artifact_id_of(payload)]["object"] = None
 
 
 def _manifest_object_missing(obs, ctx):
@@ -424,13 +423,40 @@ def _payload_identity(obs, ctx):
 
     def mutate(m):
         row = next(r for r in m["observations"] if r.get("payload"))
-        old = row["payload"]["artifact_id"]
+        old = rules.payload_artifact_id_of(row["payload"])
         new = "payload-" + "0" * 32
         obs["payloads"][new] = copy.deepcopy(obs["payloads"][old])
-        obs["payloads"][new]["artifact"]["artifact_id"] = new
-        row["payload"]["artifact_id"] = new
+        artifact = obs["payloads"][new]["artifact"]
+        artifact["artifact_id"] = new
+        artifact["uri"] = artifact["uri"].rpartition("/")[0] + f"/{new}"
+        row["payload"]["uri"] = rules.observation_payload_uri(ctx["run_id"], new)
 
     rewrite_manifest(obs, "episode", _first(obs, "episode", ctx["run_id"]), mutate)
+
+
+def _payload_of_another_run(obs, ctx):
+    """An observation names, by Logical URI, a payload key of another RobotRun
+    whose record and object agree with the reference (consistent)."""
+
+    def mutate(m):
+        ref = m["observations"][0]["payload"]
+        payload_id = rules.payload_artifact_id_of(ref)
+        ref["uri"] = rules.observation_payload_uri("run-elsewhere", payload_id)
+
+    rewrite_manifest(obs, "scene", _first(obs, "scene", ctx["run_id"]), mutate)
+
+
+def _payload_by_location(obs, ctx):
+    """An observation names its payload by its storage location instead of a
+    Logical URI."""
+
+    def mutate(m):
+        ref = m["observations"][0]["payload"]
+        ref["uri"] = obs["payloads"][rules.payload_artifact_id_of(ref)]["artifact"][
+            "uri"
+        ]
+
+    rewrite_manifest(obs, "scene", _first(obs, "scene", ctx["run_id"]), mutate)
 
 
 PLATFORM_CONTROLS: tuple[Control, ...] = tuple(
@@ -603,6 +629,18 @@ PLATFORM_CONTROLS: tuple[Control, ...] = tuple(
             "one recorded message referenced through two payload artifacts",
             {"payload_identity"},
             _payload_identity,
+        ),
+        (
+            "payload_of_another_run",
+            "one observation names another RobotRun's payload key (consistent)",
+            {"payload_ref"},
+            _payload_of_another_run,
+        ),
+        (
+            "payload_by_location",
+            "one observation names its payload by storage location, not Logical URI",
+            {"payload_ref", "manifest_forbidden_field"},
+            _payload_by_location,
         ),
     )
 )

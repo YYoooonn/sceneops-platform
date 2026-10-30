@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from sceneops_core.artifacts.logical_uri import LogicalNamespace, format_logical_uri
+
 from sceneops_core.provenance import ClockOrigin, PinnedContent
 from sceneops_core.scenes.nuscenes_build import NuScenesSceneBuildConfig
 from sceneops_core.scenes.schemas import (
@@ -142,12 +144,18 @@ def test_payloads_are_the_preserved_files_with_their_inventory_integrity(tmp_pat
         modality = {c.channel: c.modality.value for c in manifest.channels}
         for o in manifest.observations:
             ref = o.payload
-            assert ref.kind == "source_file" and ref.content_id == content_id
-            assert ref.frame is None
+            # The preserved file in place: its key under the sources root.
+            uri = ref.logical_uri()
+            assert uri.namespace == LogicalNamespace.SOURCES
+            prefix = f"contents/{content_id}/files/"
+            assert uri.key.startswith(prefix)
+            path = uri.key[len(prefix) :]
+            assert ref.uri == format_logical_uri(LogicalNamespace.SOURCES, uri.key)
+            assert ref.selector is None
             assert ref.media_type == MEDIA_TYPES[modality[o.channel]]
-            assert ref.sha256 == _sha256(tmp_path / ref.path)
-            assert ref.size_bytes == (tmp_path / ref.path).stat().st_size
-            assert ref.path.endswith(CHANNELS[o.channel][2])
+            assert ref.checksum == _sha256(tmp_path / path)
+            assert ref.size_bytes == (tmp_path / path).stat().st_size
+            assert path.endswith(CHANNELS[o.channel][2])
 
 
 def test_each_reading_links_its_own_calibration_and_ego_pose(tmp_path):
@@ -420,3 +428,35 @@ def test_scene_0061_slice_without_unit_keys_names_an_unpreserved_scene(slice_006
         plan_nuscenes_scenes(
             pinned=PinnedContent(inventory=inventory), files=files, config=config
         )
+
+
+def test_the_builder_emits_scene_manifest_v5_with_logical_payload_refs(tmp_path):
+    """The emitted schema version moves only with the builder's semantics
+    version (ADR-017)."""
+    from sceneops_core.artifacts.schemas import PayloadRef
+    from sceneops_core.scenes.schemas import SCENE_MANIFEST_SCHEMA_V5
+    from sceneops_scenes.nuscenes_builder import NUSCENES_SCENE_SEMANTICS_VERSION
+
+    write_nuscenes_tree(tmp_path, scenes=1)
+    manifest = _plan(tmp_path).scenes[0].manifest
+    assert manifest.schema_version == SCENE_MANIFEST_SCHEMA_V5
+    assert (
+        manifest.lineage.producer.semantics_version
+        == (NUSCENES_SCENE_SEMANTICS_VERSION)
+        == 2
+    )
+    assert {type(o.payload) for o in manifest.observations} == {PayloadRef}
+
+
+def test_a_reserved_character_in_a_file_name_is_percent_encoded_once():
+    """nuScenes file names carry '+' (e.g. ...-0800__CAM_FRONT__...): the URI
+    spells it %2B and its key is the inventory path verbatim."""
+    from sceneops_core.sources import SourceFileEntry, content_id_for
+    from sceneops_sources import content_file_payload_ref
+
+    path = "samples/CAM_FRONT/n015-2018-07-24-11-22-45+0800__CAM_FRONT__1.jpg"
+    entry = SourceFileEntry(path=path, size_bytes=3, sha256="sha256:" + "a" * 64)
+    content_id = content_id_for("sha256:" + "c" * 64)
+    ref = content_file_payload_ref(content_id, entry, media_type="image/jpeg")
+    assert "%2B0800" in ref.uri and "+" not in ref.uri
+    assert ref.logical_uri().key == f"contents/{content_id}/files/{path}"

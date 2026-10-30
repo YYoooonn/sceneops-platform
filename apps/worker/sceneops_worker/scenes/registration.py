@@ -7,28 +7,27 @@ immutable revisions; it never writes manifest or payload bytes, never reads
 a SourceSnapshot, and never reads or writes a DatasetVersion: membership is
 a separate composition that pins the revisions registration returns.
 
-    S1  durability and integrity gate, for every input artifact, against the
-        ArtifactStore itself and not only against database rows:
-          manifest  the ArtifactRecord exists, is a SCENE_MANIFEST and pins
-                    a checksum and size; its bytes are read back and match
-                    both, and are a canonical SceneManifest (strict parse,
-                    fingerprint re-derived); its id is the revision's
-                    deterministic manifest artifact id
-          payloads  by reference kind (the only kind dispatch, MS-10):
-                    an ArtifactPayloadRef resolves to an OBSERVATION_PAYLOAD
-                    ArtifactRecord with exactly the referenced checksum, size
-                    and media type, whose object is present in the store with
-                    its recorded size (one listing per payload prefix); a
-                    SourceFileRef is checked in S2 against its content
+    S1  manifest gate, for every input artifact, against the ArtifactStore
+        itself and not only against database rows: the ArtifactRecord exists,
+        is a SCENE_MANIFEST and pins a checksum and size; its bytes are read
+        back and match both, and are a canonical SceneManifest v5 (strict
+        parse, fingerprint re-derived); its id is the revision's deterministic
+        manifest artifact id
     S2  derive each Scene's unit id; reject duplicate units, more than one
         source or producer fingerprint, and a source binding that is not the
-        registered source:
+        registered source; then verify every payload reference against that
+        source (``sceneops_worker.payload_registration``), all input
+        manifests in one batch:
           recording  the RobotRun is registered and the manifests were built
-                     from its recording bytes
+                     from its recording bytes; every reference names one of
+                     its registered OBSERVATION_PAYLOADs at its payload key,
+                     with exactly the recorded checksum, size and media type
           content    the SourceContent is registered with the pinned
-                     content_checksum, and every SourceFileRef matches its
-                     inventory entry (path, sha256, size) and is stored with
-                     that size (one listing per content prefix)
+                     content_checksum; every reference names a file of its
+                     inventory, where the inventory places it, with exactly
+                     the inventory's sha256 and size
+        and every referenced object is present in the store with the pinned
+        size (one listing per RobotRun or content)
     S3  one transaction: register each unit and revision additively
         (sceneops_db.repositories.revisions); commit
           same unit + same manifest checksum          -> no-op
@@ -52,13 +51,7 @@ re-verifies and converges on the committed rows.
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-from sceneops_core.artifacts.schemas import (
-    ArtifactKind,
-    ArtifactPayloadRef,
-    ArtifactRecord,
-    SourceFileRef,
-)
+from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord, PayloadRef
 from sceneops_core.provenance import (
     InconsistentRevisionsError,
     NonDeterministicProducerError,
@@ -75,16 +68,14 @@ from sceneops_db.repositories import UnitIdentityConflictError
 
 from sceneops_worker.core.context import WorkerContext
 from sceneops_scenes.artifacts import SceneManifestIntegrityError
-from sceneops_worker.recordings.payload_refs import (
-    PayloadIntegrityError,
-    resolve_payload_artifacts,
-    verify_payload_objects,
+from sceneops_worker.payload_registration import (
+    PayloadRegistrationError,
+    verify_content_payload_refs,
+    verify_recording_payload_refs,
 )
 from sceneops_worker.sources.content import (
     RegisteredContentError,
-    SourceFileRefError,
     resolve_registered_content,
-    verify_source_file_refs,
 )
 
 
@@ -212,19 +203,6 @@ async def _verify_manifest(
         )
     except (SceneManifestIntegrityError, SceneManifestError) as exc:
         raise SceneManifestRejectedError(f"artifact {artifact_id}: {exc}") from exc
-
-    try:
-        payloads = await resolve_payload_artifacts(
-            context.artifact_record_store,
-            (
-                o.payload
-                for o in manifest.observations
-                if isinstance(o.payload, ArtifactPayloadRef)
-            ),
-        )
-        await verify_payload_objects(context.artifact_store, payloads.values())
-    except PayloadIntegrityError as exc:
-        raise SceneManifestRejectedError(f"artifact {artifact_id}: {exc}") from exc
     try:
         record = project_scene_revision(
             manifest=manifest,
@@ -262,9 +240,11 @@ async def _verify_recording_source(
     context: WorkerContext, verified: list[VerifiedSceneManifest]
 ) -> None:
     """The manifests must have been built from the RobotRun's registered
-    recording bytes. Their segment clock is the producer's declared
-    segmentation clock (Q4), not necessarily the recording clock, so it is
-    not compared with the RobotRun."""
+    recording bytes, and every payload they reference must be one of its
+    registered observation payloads, as recorded and as stored. Their
+    segment clock is the producer's declared segmentation clock (Q4), not
+    necessarily the recording clock, so it is not compared with the
+    RobotRun."""
     robot_run_id = verified[0].record.source_id
     run = await context.robot_store.get_run(robot_run_id)
     if run is None:
@@ -282,6 +262,10 @@ async def _verify_recording_source(
                 f"manifest was built from recording bytes {source.recording_checksum}, "
                 f"but RobotRun {robot_run_id} is {recording.checksum}"
             )
+    try:
+        await verify_recording_payload_refs(context, run, _payload_refs(verified))
+    except PayloadRegistrationError as exc:
+        raise SceneManifestRejectedError(str(exc)) from exc
 
 
 async def _verify_content_source(
@@ -303,18 +287,14 @@ async def _verify_content_source(
                 f"but SourceContent {content_id} is {content.record.content_checksum}"
             )
     try:
-        await verify_source_file_refs(
-            context,
-            content,
-            (
-                o.payload
-                for item in verified
-                for o in item.manifest.observations
-                if isinstance(o.payload, SourceFileRef)
-            ),
-        )
-    except SourceFileRefError as exc:
+        await verify_content_payload_refs(context, content, _payload_refs(verified))
+    except PayloadRegistrationError as exc:
         raise SceneManifestRejectedError(str(exc)) from exc
+
+
+def _payload_refs(verified: list[VerifiedSceneManifest]) -> list[PayloadRef]:
+    """Every payload reference of the input, for one batched source check."""
+    return [o.payload for item in verified for o in item.manifest.observations]
 
 
 # --- S3 ----------------------------------------------------------------------------
