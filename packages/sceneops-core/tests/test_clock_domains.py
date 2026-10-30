@@ -271,10 +271,14 @@ def test_two_clocks_of_one_robot_run_are_not_comparable():
 
 def test_unit_origin_is_comparable_only_within_its_unit():
     relative = ClockDomain(clock="format.frame_time", origin="unit", resolution_ns=1)
-    first = clock_instance(relative, _content_source("0"))
-    require_comparable(first, clock_instance(relative, _content_source("0")))
+    first = clock_instance(relative, _content_source("0").origin_scope())
+    require_comparable(
+        first, clock_instance(relative, _content_source("0").origin_scope())
+    )
     with pytest.raises(IncomparableClocksError):
-        require_comparable(first, clock_instance(relative, _content_source("1")))
+        require_comparable(
+            first, clock_instance(relative, _content_source("1").origin_scope())
+        )
 
 
 def test_unix_epoch_is_comparable_across_sources():
@@ -282,12 +286,12 @@ def test_unix_epoch_is_comparable_across_sources():
         clock="format.timestamp", origin="unix_epoch", resolution_ns=1
     )
     require_comparable(
-        clock_instance(absolute, _content_source("0")),
-        clock_instance(absolute, recording_source()),
+        clock_instance(absolute, _content_source("0").origin_scope()),
+        clock_instance(absolute, recording_source().origin_scope()),
     )
     source_origin = absolute.model_copy(update={"origin": ClockOrigin.SOURCE})
     with pytest.raises(IncomparableClocksError):
         require_comparable(
-            clock_instance(source_origin, _content_source("0")),
-            clock_instance(source_origin, recording_source()),
+            clock_instance(source_origin, _content_source("0").origin_scope()),
+            clock_instance(source_origin, recording_source().origin_scope()),
         )

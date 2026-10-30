@@ -212,6 +212,11 @@ declares. Scene and Episode manifests carry `clock_domains[]`, and every timesta
 structure names its clock by id: the binding's `source_clock` (the window), a Scene
 channel, pose or group, an Episode stream.
 
+The clock module knows no source kind. Origin authority belongs to the unit's source
+binding (`sceneops_core.provenance.sources`): `permitted_clock_origins` says which
+origins its clocks may declare, and `origin_scope()` returns the `OriginScope` (a
+`source` key and a `unit` key) its clocks' origin instances resolve to.
+
 ```text
 ClockDomain
   clock          open identifier (validate_source_clock); "<format>.<clock>" for a
@@ -229,13 +234,17 @@ Rules every manifest enforces (`check_clock_domains`):
 - `clock_domains` is sorted by clock and declares each clock once. Every clock the
   window or a structure names is declared, and every declared clock is named; an
   undeclared clock and an unused declaration are both rejected.
-- A recording binding declares every clock with origin `source` and resolution 1 ns.
-  The recording builders set this (`recording_clock_domains`); no build configuration
-  can change it. Capture's log time is a host clock and a header stamp's epoch belongs
-  to the robot, and neither can be verified from the recording.
-- A content binding's origins are its format builder's decision. LeRobot time is
-  `lerobot.frame_time`, origin `unit`, resolution 1 ns: zero is the episode's first
-  frame and the data asserts no absolute time. nuScenes time is
+- Every clock has an origin the binding permits. A recording binding permits only
+  `source`, and its builders declare every clock with origin `source` and resolution
+  1 ns (`recording_clock_domains`); no build configuration can change it. Capture's
+  log time is a host clock and a header stamp's epoch belongs to the robot, and
+  neither can be verified from the recording. The rule is checked whenever a manifest
+  is constructed or parsed, so an unregistered manifest cannot assert a comparability
+  its source does not grant.
+- A content binding permits every origin; which one a content clock has is its
+  format builder's decision. LeRobot time is `lerobot.frame_time`, origin `unit`,
+  resolution 1 ns: zero is the episode's first frame and the data asserts no absolute
+  time. nuScenes time is
   `nuscenes.timestamp`, origin `unix_epoch`, resolution 1 000 ns: the tables count
   microseconds since the Unix epoch, sensor readings, ego poses and samples on one
   clock (every ego pose is at its reading's timestamp); CAN is not canonicalized.
@@ -247,8 +256,9 @@ Rules every manifest enforces (`check_clock_domains`):
 
 Two timestamps are comparable only on the same clock id and the same origin instance
 (`ClockInstance`, `require_comparable`). Any instance matches for `unix_epoch`; for
-`source` the instance is the source (`source_kind`, `source_id`), and for `unit` it is
-the unit (`source_kind`, `source_id`, `unit_key`). So two Scenes of one RobotRun on
+`source` the instance is the binding's source key (`source_kind`, `source_id`), and for
+`unit` its unit key (`source_kind`, `source_id`, `unit_key`). Equal timestamp values
+never make two instances comparable. So two Scenes of one RobotRun on
 `mcap_log_time` are comparable, while two RobotRuns on the same clock id are not.
 `SceneManifest.clock_instance(clock)` / `EpisodeManifest.clock_instance(clock)` return
 a manifest's instance.

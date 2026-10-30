@@ -23,6 +23,21 @@ or window. The producer fingerprint is computed over that revision
 (``sceneops_core.provenance.producer``), so a manifest's fingerprint can be
 re-derived from the manifest itself.
 
+Each binding is the origin authority of its unit's clocks
+(``sceneops_core.provenance.clocks``): ``origin_scope()`` says which units
+share a ``source``-origin and a ``unit``-origin instance, and
+``permitted_clock_origins`` which origins the unit may declare. A manifest
+checks its clock domains against them when it is constructed or parsed, so
+an unregistered manifest cannot assert comparability its source does not
+grant.
+
+Every recording clock has origin ``source`` (OQ-9). Capture's log time is a
+host clock and a header stamp's epoch is a property of the robot; the
+platform cannot verify either from the recording, so recording builders set
+the origin and no build configuration can change it. A content binding
+permits every origin: which one a content clock has is its format builder's
+decision.
+
 Scene and Episode manifests admit either binding: the recording builders
 produce ``RecordingSegmentSource``, the format builders of Dataset
 Integration (nuScenes Scenes, LeRobot Episodes) ``ContentUnitSource``.
@@ -30,7 +45,8 @@ Integration (nuScenes Scenes, LeRobot Episodes) ``ContentUnitSource``.
 
 from __future__ import annotations
 
-from typing import Annotated, Final, Literal, TypeAlias
+from collections.abc import Iterable
+from typing import Annotated, ClassVar, Final, Literal, TypeAlias
 
 from pydantic import (
     BaseModel,
@@ -51,9 +67,16 @@ from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.robots.manifest import RUN_ID_MAX_LENGTH, validate_identifier
 from sceneops_core.sources.content import content_id_for, validate_content_id
 
+from .clocks import ClockDomain, ClockOrigin, OriginScope
 from .source_time import SourceTimestampNs
 
 UNIT_KEY_MAX_LENGTH: Final = VERBATIM_KEY_MAX_LENGTH
+
+# OQ-9: the origin of every clock a recording source declares.
+RECORDING_CLOCK_ORIGIN: Final = ClockOrigin.SOURCE
+# Recording timestamps (MCAP log / publish time, ROS 2 header stamps,
+# integer-nanosecond payload fields) are native nanoseconds.
+RECORDING_CLOCK_RESOLUTION_NS: Final = 1
 
 
 class _ProvenanceModel(BaseModel):
@@ -124,6 +147,16 @@ def _check_content_identity(content_id: str, content_checksum: str) -> None:
         )
 
 
+def _origin_scope(source_kind: str, source_id: str, unit_key: str) -> OriginScope:
+    """A ``source`` origin is shared by every unit of one source; a ``unit``
+    origin by one unit of it. The source kind is part of both keys, so a
+    RobotRun id and a content id never name one origin instance."""
+    return OriginScope(
+        source=(source_kind, source_id),
+        unit=(source_kind, source_id, unit_key),
+    )
+
+
 def _check_window(start_timestamp_ns: int, end_timestamp_ns: int) -> None:
     if end_timestamp_ns <= start_timestamp_ns:
         raise ValueError(
@@ -155,6 +188,10 @@ class RecordingSegmentSource(_ProvenanceModel):
     There is no recording URI here: consumers reach the bytes only through
     the verified recording resolver, keyed by ``robot_run_id``.
     """
+
+    permitted_clock_origins: ClassVar[frozenset[ClockOrigin]] = frozenset(
+        {RECORDING_CLOCK_ORIGIN}
+    )
 
     source_kind: Literal["recording"] = "recording"
     robot_run_id: StrictStr
@@ -198,6 +235,10 @@ class RecordingSegmentSource(_ProvenanceModel):
         immutable recording, so the checksum is not needed to name it."""
         return self.robot_run_id
 
+    def origin_scope(self) -> OriginScope:
+        """Every segment of one RobotRun shares its ``source`` origins."""
+        return _origin_scope(self.source_kind, self.source_id, self.unit_key)
+
     def contains(self, timestamp_ns: int) -> bool:
         """Half-open window membership, in this segment's ``source_clock``."""
         return self.start_timestamp_ns <= timestamp_ns < self.end_timestamp_ns
@@ -225,6 +266,8 @@ class ContentUnitSource(_ProvenanceModel):
     consumers reach the bytes only through the verified content reader,
     keyed by ``content_id``. No RobotRun is involved.
     """
+
+    permitted_clock_origins: ClassVar[frozenset[ClockOrigin]] = frozenset(ClockOrigin)
 
     source_kind: Literal["content"] = "content"
     content_id: StrictStr
@@ -262,6 +305,10 @@ class ContentUnitSource(_ProvenanceModel):
         source."""
         return self.content_id
 
+    def origin_scope(self) -> OriginScope:
+        """Every native unit of one content shares its ``source`` origins."""
+        return _origin_scope(self.source_kind, self.source_id, self.unit_key)
+
     def contains(self, timestamp_ns: int) -> bool:
         """Half-open window membership, in this unit's ``source_clock``."""
         return self.start_timestamp_ns <= timestamp_ns < self.end_timestamp_ns
@@ -279,7 +326,23 @@ SourceBinding: TypeAlias = Annotated[
 ]
 
 
+def recording_clock_domains(clocks: Iterable[str]) -> list[ClockDomain]:
+    """The declarations of the recording clocks one unit uses, in canonical
+    order, as the recording builders set them: origin ``source`` (OQ-9) and
+    nanosecond resolution."""
+    return [
+        ClockDomain(
+            clock=clock,
+            origin=RECORDING_CLOCK_ORIGIN,
+            resolution_ns=RECORDING_CLOCK_RESOLUTION_NS,
+        )
+        for clock in sorted(set(clocks))
+    ]
+
+
 __all__ = [
+    "RECORDING_CLOCK_ORIGIN",
+    "RECORDING_CLOCK_RESOLUTION_NS",
     "SHA256_CHECKSUM_PATTERN",
     "UNIT_KEY_MAX_LENGTH",
     "ContentSourceRevision",
@@ -288,4 +351,5 @@ __all__ = [
     "RecordingSourceRevision",
     "SourceBinding",
     "SourceRevision",
+    "recording_clock_domains",
 ]

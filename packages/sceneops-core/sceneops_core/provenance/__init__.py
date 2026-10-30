@@ -9,16 +9,14 @@ model.
 """
 
 from .clocks import (
-    RECORDING_CLOCK_ORIGIN,
-    RECORDING_CLOCK_RESOLUTION_NS,
     ClockDomain,
     ClockDomainError,
     ClockInstance,
     ClockOrigin,
     IncomparableClocksError,
+    OriginScope,
     check_clock_domains,
     clock_instance,
-    recording_clock_domains,
     require_comparable,
 )
 from .frame_time import NS_PER_SECOND, frame_index_of, frame_time_ns
@@ -54,6 +52,8 @@ from .revisions import (
 )
 from .source_time import INT64_MAX, SourceTimestampNs, SourceTimeUnit, promote_to_ns
 from .sources import (
+    RECORDING_CLOCK_ORIGIN,
+    RECORDING_CLOCK_RESOLUTION_NS,
     SHA256_CHECKSUM_PATTERN,
     UNIT_KEY_MAX_LENGTH,
     ContentSourceRevision,
@@ -62,6 +62,7 @@ from .sources import (
     RecordingSourceRevision,
     SourceBinding,
     SourceRevision,
+    recording_clock_domains,
 )
 
 __all__ = [
@@ -86,6 +87,7 @@ __all__ = [
     "IncomparableClocksError",
     "InconsistentRevisionsError",
     "NonDeterministicProducerError",
+    "OriginScope",
     "PinnedContent",
     "PinnedRecording",
     "ProducerFingerprintMismatchError",

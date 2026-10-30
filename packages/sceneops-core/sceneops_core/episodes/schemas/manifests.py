@@ -314,7 +314,7 @@ class EpisodeManifest(_ManifestModel):
             raise ValueError("an Episode holds at least one recorded occurrence")
         check_clock_domains(
             self.clock_domains,
-            source=self.lineage.source,
+            permitted_origins=self.lineage.source.permitted_clock_origins,
             referenced=[
                 self.lineage.source.source_clock,
                 *(s.source_clock for s in self.streams),
@@ -436,7 +436,9 @@ class EpisodeManifest(_ManifestModel):
     def clock_instance(self, clock: str) -> ClockInstance:
         """The origin instance of ``clock`` in this Episode: timestamps of two
         Episodes are comparable only when their instances are equal."""
-        return clock_instance(self.clock_domain(clock), self.lineage.source)
+        return clock_instance(
+            self.clock_domain(clock), self.lineage.source.origin_scope()
+        )
 
     def stream(self, topic: str) -> EpisodeStream:
         for stream in self.streams:
