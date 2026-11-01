@@ -56,7 +56,6 @@ from typing import Any, Final
 from sceneops_core.episodes.recording_build import (
     EpisodeEventSourceConfig,
     EpisodeStreamConfig,
-    EpisodeStreamRole,
     EpisodeTimePolicy,
     EpisodeTimeSource,
     EventMarkerSegmentation,
@@ -71,6 +70,7 @@ from sceneops_core.episodes.schemas import (
     EpisodeManifest,
     EpisodeOccurrence,
     EpisodeStream,
+    EpisodeStreamRole,
 )
 from sceneops_core.provenance import (
     PinnedRecording,

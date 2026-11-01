@@ -28,13 +28,13 @@ from sceneops_core.provenance import (
     recording_clock_domains,
 )
 
-from .recording_build import EpisodeStreamRole
 from .schemas import (
     EpisodeField,
     EpisodeLineage,
     EpisodeManifest,
     EpisodeOccurrence,
     EpisodeStream,
+    EpisodeStreamRole,
 )
 
 DEFAULT_PRODUCER_ID = "sceneops.test_episode_producer"

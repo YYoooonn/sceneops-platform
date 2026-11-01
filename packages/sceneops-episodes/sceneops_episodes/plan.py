@@ -11,8 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sceneops_core.episodes.recording_build import EpisodeStreamRole
-from sceneops_core.episodes.schemas import EpisodeManifest
+from sceneops_core.episodes.schemas import EpisodeManifest, EpisodeStreamRole
 from sceneops_core.provenance import ProducerInfo
 from sceneops_recording.observations.payloads import PlannedPayload
 

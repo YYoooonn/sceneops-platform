@@ -12,10 +12,10 @@ from sceneops_core.episodes import (
     derive_episode_readiness,
     latest_run_for_revision,
 )
-from sceneops_core.episodes.recording_build import EpisodeStreamRole
 from sceneops_core.episodes.schemas import (
     EpisodeManifest,
     EpisodeManifestError,
+    EpisodeStreamRole,
     EpisodeValidationRunRecord,
     NonCanonicalEpisodeManifestError,
     episode_id_for,

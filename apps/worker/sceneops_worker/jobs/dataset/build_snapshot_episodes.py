@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sceneops_core.common.schemas import JsonDict
-from sceneops_core.episodes.recording_build import EpisodeStreamRole
+from sceneops_core.episodes.schemas import EpisodeStreamRole
 from sceneops_core.jobs.schemas import (
     BuildSnapshotEpisodesJobParams,
     BuildSnapshotEpisodesJobResult,

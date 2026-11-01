@@ -1,4 +1,5 @@
-from .enums import EpisodeOutcome
+from .enums import EpisodeOutcome, EpisodeStreamRole
+from .fields import FIELD_PATH_PATTERN, FieldPath
 from .manifests import (
     EPISODE_MANIFEST_SCHEMA_V4,
     EpisodeField,
@@ -24,6 +25,7 @@ from .runs import EpisodeProfileRunRecord, EpisodeValidationRunRecord
 
 __all__ = [
     "EPISODE_MANIFEST_SCHEMA_V4",
+    "FIELD_PATH_PATTERN",
     "EpisodeField",
     "EpisodeLineage",
     "EpisodeManifest",
@@ -34,9 +36,11 @@ __all__ = [
     "EpisodeRecord",
     "EpisodeRevisionRecord",
     "EpisodeStream",
+    "EpisodeStreamRole",
     "EpisodeTimeWindow",
     "EpisodeValidationRunRecord",
     "EpisodeValue",
+    "FieldPath",
     "FrameTimeline",
     "NonCanonicalEpisodeManifestError",
     "UnsupportedEpisodeManifestVersionError",

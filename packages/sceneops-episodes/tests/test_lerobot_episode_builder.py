@@ -18,8 +18,10 @@ import pytest
 
 from sceneops_core.artifacts.logical_uri import LogicalNamespace, format_logical_uri
 from sceneops_core.episodes.lerobot_build import LeRobotEpisodeBuildConfig
-from sceneops_core.episodes.recording_build import EpisodeStreamRole
-from sceneops_core.episodes.schemas import load_canonical_episode_manifest
+from sceneops_core.episodes.schemas import (
+    EpisodeStreamRole,
+    load_canonical_episode_manifest,
+)
 from sceneops_core.provenance import PinnedContent
 from sceneops_core.sources import SnapshotSelection
 from sceneops_episodes.lerobot_builder import (

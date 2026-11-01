@@ -32,7 +32,7 @@ from sceneops_core.provenance import (
     unit_id_for,
 )
 
-from ..recording_build import EpisodeStreamRole
+from .enums import EpisodeStreamRole
 from .manifests import EpisodeManifest
 
 

@@ -102,7 +102,8 @@ from sceneops_core.temporal import (
     frame_time_ns,
 )
 
-from ..recording_build import EpisodeStreamRole, FieldPath
+from .enums import EpisodeStreamRole
+from .fields import FieldPath
 
 EPISODE_MANIFEST_SCHEMA_V4: Final = "sceneops.episode_manifest/v4"
 

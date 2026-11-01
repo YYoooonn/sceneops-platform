@@ -52,13 +52,13 @@ from sceneops_core.episodes.lerobot_build import (
     LeRobotEpisodeBuildConfig,
     LeRobotFeatureSelection,
 )
-from sceneops_core.episodes.recording_build import EpisodeStreamRole
 from sceneops_core.episodes.schemas import (
     EpisodeField,
     EpisodeLineage,
     EpisodeManifest,
     EpisodeOccurrence,
     EpisodeStream,
+    EpisodeStreamRole,
     FrameTimeline,
 )
 from sceneops_core.provenance import PinnedContent, ProducerInfo

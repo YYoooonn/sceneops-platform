@@ -32,7 +32,7 @@ from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.schemas import JsonDict
-from sceneops_core.episodes.recording_build import EpisodeStreamRole
+from sceneops_core.episodes.schemas import EpisodeStreamRole
 from sceneops_core.jobs.schemas import (
     BuildRecordingEpisodesJobParams,
     BuildRecordingEpisodesJobResult,

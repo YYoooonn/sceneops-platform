@@ -26,11 +26,11 @@ Deterministic: identical inputs always produce an identical output.
 
 from __future__ import annotations
 
-from sceneops_core.episodes.recording_build import EpisodeStreamRole
 from sceneops_core.episodes.schemas import (
     EpisodeManifest,
     EpisodeOccurrence,
     EpisodeStream,
+    EpisodeStreamRole,
 )
 
 from .config import TemporalAlignmentConfig, TemporalSourceContext

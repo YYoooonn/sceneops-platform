@@ -41,9 +41,8 @@ Nothing here aligns, resamples or associates streams. Those are derived
 
 from __future__ import annotations
 
-import re
 from enum import StrEnum
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     AfterValidator,
@@ -67,17 +66,7 @@ from sceneops_core.robots.clock import (
 )
 from sceneops_core.robots.recording_payload import PayloadExtraction
 
-FIELD_PATH_PATTERN: Final = r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$"
-_FIELD_PATH_RE = re.compile(FIELD_PATH_PATTERN)
-
-
-def _validate_field_path(value: str) -> str:
-    if not isinstance(value, str) or not _FIELD_PATH_RE.fullmatch(value):
-        raise ValueError(
-            f"field path must be dotted identifiers ({FIELD_PATH_PATTERN}), got {value!r}"
-        )
-    return value
-
+from .schemas import EpisodeStreamRole, FieldPath
 
 VerbatimKey = Annotated[
     StrictStr, AfterValidator(lambda v: validate_verbatim_key(v, field="source key"))
@@ -86,21 +75,6 @@ SourceClock = Annotated[StrictStr, AfterValidator(validate_source_clock)]
 FieldName = Annotated[
     StrictStr, AfterValidator(lambda v: validate_local_id(v, field="field name"))
 ]
-FieldPath = Annotated[StrictStr, AfterValidator(_validate_field_path)]
-
-
-class EpisodeStreamRole(StrEnum):
-    """What a recorded stream is to the Episode. ``event`` is reserved for
-    task / event sources (``RecordingEpisodeBuildConfig.events``).
-    ``transition`` is a per-frame signal about the step from a frame to the
-    next (a LeRobot ``next.*`` feature): one occurrence per frame of the
-    Episode's frame timeline, never an event; recordings have none."""
-
-    OBSERVATION = "observation"
-    STATE = "state"
-    ACTION = "action"
-    EVENT = "event"
-    TRANSITION = "transition"
 
 
 class EpisodeTimeSource(StrEnum):
@@ -360,11 +334,9 @@ class RecordingEpisodeBuildConfig(_ConfigModel):
 
 
 __all__ = [
-    "FIELD_PATH_PATTERN",
     "EpisodeEventSourceConfig",
     "EpisodeSegmentation",
     "EpisodeStreamConfig",
-    "EpisodeStreamRole",
     "EpisodeTimePolicy",
     "EpisodeTimeSource",
     "EventMarkerSegmentation",
