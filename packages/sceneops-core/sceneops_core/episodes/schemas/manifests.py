@@ -312,6 +312,12 @@ class EpisodeManifest(_ManifestModel):
                 _check_component_lengths(occurrence, stream)
         if not seen_ids:
             raise ValueError("an Episode holds at least one recorded occurrence")
+        self._check_clock_domains()
+        self._check_source_window()
+        self._check_frame_timeline()
+        return self
+
+    def _check_clock_domains(self) -> None:
         check_clock_domains(
             self.clock_domains,
             permitted_origins=self.lineage.source.permitted_clock_origins,
@@ -322,9 +328,6 @@ class EpisodeManifest(_ManifestModel):
             ],
             timestamps=self.clocked_timestamps(),
         )
-        self._check_source_window()
-        self._check_frame_timeline()
-        return self
 
     def _check_frame_timeline(self) -> None:
         """With a frame timeline: its clock is the window's and has origin

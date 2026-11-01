@@ -200,9 +200,7 @@ binding projects the source revision the producer fingerprint is computed over.
   the unit's own registered source (`sceneops_worker.payload_registration`).
   Downstream of canonical manifests nothing dispatches on the source: consumers read
   a reference through the verified reader, and one that cannot decode a selector
-  refuses it explicitly. `tools/checks/source_dispatch.py` (run by `make test`) lists
-  the modules upstream of the manifests and the few allowed downstream sites, and
-  fails on any other branch on source kind, format or payload namespace.
+  refuses it explicitly (§8).
 
 ### 4.1 Clock domains
 
@@ -227,8 +225,8 @@ and with which origin, is likewise the recording binding's (`recording_clock_dom
 Provenance depends on temporal, never the reverse.
 
 The declared window is not a temporal value: it is the binding's `source_clock` and
-`[start_timestamp_ns, end_timestamp_ns)` in `lineage.source`, and it is read through the
-binding.
+`[start_timestamp_ns, end_timestamp_ns)` in `lineage.source`. Consumers read it through
+the manifest's `declared_window()`, never from the binding (§8).
 
 ```text
 ClockDomain
@@ -379,6 +377,19 @@ module; provenance neither holds nor re-exports a temporal module, and the recor
 clock policy stays with the recording binding. Clock comparability across sources:
 `test_clock_comparability.py`.
 
+`packages/sceneops-core/tests/test_manifest_envelope_boundaries.py`: the Scene and
+Episode schema packages import only `common`, `temporal`, `PayloadRef`, `provenance`
+and run records besides themselves, and loading them initializes no build
+configuration. The dependency direction is:
+
+```text
+common  <-  temporal  <-  provenance (bindings)  <-  {scenes,episodes}.schemas  <-  build configurations, builders, consumers
+```
+
+`test_episode_vocabulary_boundaries.py`: the Episode stream roles and field paths are
+defined once, in `sceneops_core.episodes.schemas`, and every build configuration,
+builder and consumer takes them from there.
+
 Record contracts: `test_source_content.py`; bindings, revisions and pinned inputs:
 `test_provenance_sources.py`; fingerprint: `test_producer_fingerprint.py`; unit and
 revision identity and the registration decision: `test_unit_identity.py`. Source
@@ -387,3 +398,98 @@ Registry decisions: `test_source_registry.py`; publication:
 real MinIO and PostgreSQL in `*_integration.py`); the PostgreSQL invariants and races:
 `packages/sceneops-db/tests/test_source_registry_repository.py`; the reference
 snapshots end to end: `make test-infrastructure SUITE=sources`.
+
+## 8. Canonical processing and source-aware lifecycle
+
+A manifest carries its source binding in `lineage.source`, and two kinds of code use
+it differently.
+
+**Canonical semantic processing** (schema validation, alignment, profiling,
+detection, analytics, sample views and the other canonical consumers) works on what
+the manifest declares: clock domains and origin instances, the declared window,
+coordinate frames, calibrations, channels and streams, observations and occurrences,
+`PayloadRef`s and their media types and selectors. It never chooses behavior by the
+source kind, the source format, the source identity (`robot_run_id`, `content_id`,
+`source_id`, `unit_key`), the Logical URI namespace or who owns a payload's bytes.
+A consumer that cannot decode a reference refuses it by capability (a selector it
+does not support, a media type it cannot read), never by source.
+
+**Source-aware lifecycle code** dispatches by source by design: source preservation
+and the native readers, the format builders and the label importers, canonical,
+payload and label registration (ownership and namespace of every reference), unit
+and revision identity, revision projections into per-kind record columns,
+persistence, and selection of members by provenance. Storage resolution interprets a
+Logical URI's namespace to locate bytes (`PayloadUriResolver`); that is lookup, not
+dispatch.
+
+**Anchor resolution** sits between the two: the one anchor resolver
+(`SceneAnchorResolver.resolve`) matches a LabelSet anchor's whole source identity
+(`source_kind`, `source_id`) against the Scene's binding, and nothing else.
+
+**Temporal semantics.** `sceneops_core.temporal` owns clocks, origins, origin
+instances and comparability. The binding issues what is per source: its
+`permitted_clock_origins` and its `OriginScope` (`origin_scope()`), and it carries the
+declared window. Only the manifest envelope reads these from the binding:
+
+| Envelope operation | Scene | Episode |
+| --- | --- | --- |
+| the declared window accessor | `SceneManifest.declared_window` | `EpisodeManifest.declared_window` |
+| the origin instance accessor (`OriginScope` of the binding) | `SceneManifest.clock_instance` | `EpisodeManifest.clock_instance` |
+| every clock has an origin the binding permits | `SceneManifest._check_clock_domains` | `EpisodeManifest._check_clock_domains` |
+| every timestamp on the window's clock lies in the window | `SceneManifest._check_source_window` | `EpisodeManifest._check_source_window` |
+| a frame timeline is on the window's clock and spans the window | | `EpisodeManifest._check_frame_timeline` |
+
+Every other consumer reads `manifest.declared_window()` and
+`manifest.clock_instance(clock)`. The lineage validators also re-derive the producer
+fingerprint from the binding's source revision (lineage consistency). None of the
+envelope operations branches on the source kind: what differs per source is stated by
+the binding itself.
+
+**Enforcement.** `tools/checks/source_dispatch.py` (part of `make check-boundaries`
+and of `make test`) checks every production module under `apps/`, `packages/` and
+`integrations/` statically and fails on:
+
+- a *dispatch site*: a comparison reading `source_kind` or `format`, or with a
+  source-kind or format literal; a comparison reading a binding's identity
+  (`source_id`, `robot_run_id`, `content_id`, `unit_key`); a comparison with a payload
+  namespace, or a `startswith` / `endswith` test against a Logical URI literal; an
+  `isinstance` / `issubclass` / `match` on a binding, source revision or pinned
+  source class; a dict keyed by format literals;
+- a *binding-time site*: a read of `source_clock`, `start_timestamp_ns`,
+  `end_timestamp_ns` or `contains` on a binding, or any read of `origin_scope` or
+  `permitted_clock_origins`. A binding is an expression ending in `.lineage.source`,
+  or a local name assigned one (also through an alias or `:=`, and inside a closure)
+  or annotated with a binding class. The same fields on a declared window, a channel,
+  a stream or an aligned output are not binding reads.
+
+A site is allowed only where its table says so, each entry with its reason:
+
+| Table | Granularity | Admits | Holds |
+| --- | --- | --- | --- |
+| `UPSTREAM` | module path prefix | every rule | provenance, Source Registry contracts, `sceneops-sources`, the native builders, `sceneops-db`, the snapshot build jobs, the canonical / payload / source registrars, the publisher, the native label importer and its job, `integrations/dataset-acquisition` |
+| `LIFECYCLE` | module + function | dispatch sites | `_source_id` and `project_*_revision` of the Scene and Episode records (per-kind source columns) |
+| `DOWNSTREAM` | module + function | dispatch sites | the LeRobot export adapter's own target format |
+| `IDENTITY` | module + function | whole-identity comparisons only | `SceneAnchorResolver.resolve` |
+| `ENVELOPE` | module + function | binding-time sites only | the envelope operations above |
+
+The schema packages themselves are checked: a source-kind branch added to a manifest
+validator, even to an envelope operation, fails. A listed site that no longer exists
+fails too, so the tables cannot go stale. `tools/checks/tests/test_source_dispatch.py`
+holds negative and positive controls on real modules (validators, the profiler,
+alignment, `ALIGN_EPISODE`, the anchor resolver, registration, unit identity, storage
+resolution) under the repository's tables.
+
+Limits of the check: name tracking is flow-insensitive and local to a function and
+its closures. It does not follow attributes (`self._source = ...`), containers,
+return values or calls into other functions, and it does not see a source identity
+used as a dict key or passed to a helper that branches on it. Those remain review
+responsibilities. The import direction of these layers is checked by the focused
+tests of §7, not by `tools/checks/import_boundaries.py`, which checks package-level
+layering only.
+
+`sceneops_core.episodes.alignment` re-exports the recording clock id
+`MCAP_LOG_TIME_CLOCK` from `sceneops_core.robots.clock`. No alignment code uses it
+(`ALIGN_EPISODE` takes its clock from `declared_window()` or from an explicit
+`TemporalSourceContext`), and it is alignment's only import of a recording module.
+The constant belongs to the recording layer (`robots.clock`), and its
+callers should import it from there.

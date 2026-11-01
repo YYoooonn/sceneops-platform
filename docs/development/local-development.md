@@ -140,7 +140,8 @@ make check-commands                the command surface is consistent (no pytest,
 ```
 
 - `make test` first runs `make check-boundaries` (the static dependency-direction check
-  of [Repository structure](../architecture/repository-structure.md)), then each unit
+  of [Repository structure](../architecture/repository-structure.md) and the source
+  dispatch check of [Ingress boundaries](../architecture/ingress-boundaries.md) §8), then each unit
   suite in its own pytest process (`apps/{worker,api,publisher}`, `integrations/groundingdino-server`,
   `packages/sceneops-{core,streaming,recording,execution,acquisition,scenes,episodes,
   inference,evaluation,analytics}`, `tools/{checks,reference,e2e}`,
@@ -313,7 +314,7 @@ SceneOps contract, and a green result proves nothing about correctness. Correctn
 | `make check-celery` | Redis answers and both Celery workers reply to `inspect ping` |
 | `make check-runtime-boundary` | no normal runtime service mounts the raw dataset (also part of `SUITE=boundaries`) |
 | `make check-inference-server` / `check-inference-server-ready` | the inference server is alive / has loaded its model |
-| `make check-boundaries` | apps import packages, packages never import apps or tools, the package layering is acyclic (static; part of `make test`) |
+| `make check-boundaries` | apps import packages, packages never import apps or tools, the package layering is acyclic; canonical processing never dispatches on the source and reads the declared window and origin instance through the manifest ([Ingress boundaries](../architecture/ingress-boundaries.md) §8) (static; part of `make test`) |
 | `make bridge-check` / `bridge-shell` | `rclpy` and the MCAP storage plugin exist in the `streaming-bridge` image / open a shell in it |
 | `make api-health` / `api-openapi` / `show-runs` / `show-pipeline` / `show-job-events` | the API answers; a run, pipeline or job as the API reports it |
 | `make worker-run-job JOB_ID=…` / `worker-advance-pipeline PIPELINE_RUN_ID=…` | run one Job through `JobRunner`, or take one `PipelineOrchestrator` step, by hand through the worker CLI (`sceneops-worker jobs run`, `sceneops-worker pipelines advance`) |

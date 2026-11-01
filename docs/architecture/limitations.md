@@ -160,6 +160,11 @@ native reader or content builder, and no format has both. Current builder bounds
   ([Ingress boundaries](./ingress-boundaries.md) §4.1). Consumers keep comparing clocks
   by id within one manifest; the origin instance is checked only through
   `require_comparable`, which no workflow calls yet.
+- The declared window and the clock-origin authority are carried by the source binding
+  (`lineage.source`), and consumers reach them through `declared_window()` /
+  `clock_instance()`. The static check that keeps source dispatch and binding reads
+  out of canonical processing sees direct forms and local aliases only
+  ([Ingress boundaries](./ingress-boundaries.md) §8).
 - LeRobot content: only `codebase_version` v3.0 is read (v2.x is refused at build
   time, though such a snapshot is still preserved and registered). One data file and
   one task per episode are what the pinned pusht dataset exercises; multi-file and

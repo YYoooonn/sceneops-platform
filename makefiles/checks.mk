@@ -29,9 +29,12 @@ check-commands:
 .PHONY: check-boundaries
 # Dependency direction of the monorepo: apps import packages, packages never import
 # apps or tools, the package layering is acyclic, and every import is declared in the
-# importing project's pyproject.toml. Static; needs only Python.
+# importing project's pyproject.toml. Then source-aware code placement: canonical
+# processing never dispatches on the source and reads the declared window and origin
+# instance through the manifest, never from the source binding. Static; needs only Python.
 check-boundaries:
 	python3 tools/checks/import_boundaries.py
+	python3 tools/checks/source_dispatch.py
 
 .PHONY: check-runtime-boundary
 # Raw source is mounted only by the acquisition / reference-preparation
