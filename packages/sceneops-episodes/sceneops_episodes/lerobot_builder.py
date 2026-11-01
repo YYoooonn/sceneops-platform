@@ -61,13 +61,8 @@ from sceneops_core.episodes.schemas import (
     EpisodeStream,
     FrameTimeline,
 )
-from sceneops_core.provenance import (
-    ClockDomain,
-    ClockOrigin,
-    PinnedContent,
-    ProducerInfo,
-    frame_time_ns,
-)
+from sceneops_core.provenance import PinnedContent, ProducerInfo
+from sceneops_core.temporal import ClockDomain, ClockOrigin, frame_time_ns
 from sceneops_sources.lerobot import (
     LeRobotContent,
     LeRobotEpisode,

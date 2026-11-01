@@ -24,7 +24,7 @@ or window. The producer fingerprint is computed over that revision
 re-derived from the manifest itself.
 
 Each binding is the origin authority of its unit's clocks
-(``sceneops_core.provenance.clocks``): ``origin_scope()`` says which units
+(``sceneops_core.temporal.clocks``): ``origin_scope()`` says which units
 share a ``source``-origin and a ``unit``-origin instance, and
 ``permitted_clock_origins`` which origins the unit may declare. A manifest
 checks its clock domains against them when it is constructed or parsed, so
@@ -66,9 +66,12 @@ from sceneops_core.common.identifiers import (
 from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.robots.manifest import RUN_ID_MAX_LENGTH, validate_identifier
 from sceneops_core.sources.content import content_id_for, validate_content_id
-
-from .clocks import ClockDomain, ClockOrigin, OriginScope
-from .source_time import SourceTimestampNs
+from sceneops_core.temporal import (
+    ClockDomain,
+    ClockOrigin,
+    OriginScope,
+    SourceTimestampNs,
+)
 
 UNIT_KEY_MAX_LENGTH: Final = VERBATIM_KEY_MAX_LENGTH
 

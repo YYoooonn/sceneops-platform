@@ -85,11 +85,10 @@ from sceneops_core.common.identifiers import (
     validate_source_clock,
     validate_verbatim_key,
 )
-from sceneops_core.provenance import (
+from sceneops_core.provenance import ProducerInfo, SourceBinding
+from sceneops_core.temporal import (
     ClockDomain,
     ClockInstance,
-    ProducerInfo,
-    SourceBinding,
     SourceTimestampNs,
     check_clock_domains,
     clock_instance,

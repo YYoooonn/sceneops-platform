@@ -30,6 +30,7 @@ sceneops_core/
   scenes/             ← Scene domain (canonical SceneManifest, readiness, recording build config)
   sensors/            ← sensor modality enum
   streaming/          ← TelemetryEnvelope, channel registry, run lifecycle control events
+  temporal/           ← clock domains, comparability, source time, frame grid
 ```
 
 ## Core Concepts

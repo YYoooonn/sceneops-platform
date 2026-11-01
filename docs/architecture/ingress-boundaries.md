@@ -13,7 +13,7 @@
 | --- | --- | --- | --- |
 | **Acquisition** | live / recorded robot data capture, the run lifecycle, recording integrity, publication, `REGISTER_ROBOT_RUN`, the RobotRun | decide units, clocks or channel meaning; name a Scene, Episode or DatasetVersion | `sceneops_core.robots` (`RobotRunManifest`, `RobotRunRecord`) |
 | **Dataset Integration** | external dataset preservation: native bytes (SourceContent) and upstream declarations (SourceSnapshot) | create a RobotRun; interpret, convert or filter inside a file; decide units, clocks or channel meaning | `sceneops_core.sources` (inventory, declaration, descriptor) |
-| **Canonical building** | interpreting one pinned source as Scenes / Episodes: unit boundaries, clock, timestamp normalization, channel meaning, decoding | modify its source; read a snapshot descriptor; name a location | `sceneops_core.provenance` (source bindings, source revisions, pinned builder inputs, producer fingerprint, unit and revision identity) |
+| **Canonical building** | interpreting one pinned source as Scenes / Episodes: unit boundaries, clock, timestamp normalization, channel meaning, decoding | modify its source; read a snapshot descriptor; name a location | `sceneops_core.provenance` (source bindings, source revisions, pinned builder inputs, producer fingerprint, unit and revision identity); `sceneops_core.temporal` (clock domains, comparability, source time, frame grid) |
 
 Neither ingress family passes through the other, and neither ingress contract imports
 the other or the canonical layer. Canonical building reads both through explicit
@@ -206,16 +206,29 @@ binding projects the source revision the producer fingerprint is computed over.
 
 ### 4.1 Clock domains
 
-`sceneops_core.provenance.clocks` ([ADR-015](../adr/015-multi-source-platform.md) §6.2).
+`sceneops_core.temporal` ([ADR-015](../adr/015-multi-source-platform.md) §6.2).
 Every canonical timestamp is an integer ns count in one clock domain the manifest
 declares. Scene and Episode manifests carry `clock_domains[]`, and every timestamped
 structure names its clock by id: the binding's `source_clock` (the window), a Scene
 channel, pose or group, an Episode stream.
 
-The clock module knows no source kind. Origin authority belongs to the unit's source
-binding (`sceneops_core.provenance.sources`): `permitted_clock_origins` says which
-origins its clocks may declare, and `origin_scope()` returns the `OriginScope` (a
-`source` key and a `unit` key) its clocks' origin instances resolve to.
+`sceneops_core.temporal` owns what a timestamp means: the source-time value
+(`source_time`), clock domains, origins, origin instances and the comparability rule
+(`clocks`), and the frame grid (`frame_time`). It knows no source kind and imports
+nothing of provenance, the Source Registry, RobotRuns, Scenes or Episodes, so
+`PayloadRef`, whose video-frame selector carries a timestamp, depends on time semantics
+without loading source provenance.
+
+Origin authority belongs to the unit's source binding (`sceneops_core.provenance.sources`),
+which states it in temporal terms: `permitted_clock_origins` says which origins its
+clocks may declare, and `origin_scope()` returns the `OriginScope` (a `source` key and a
+`unit` key) its clocks' origin instances resolve to. Which clocks a recording declares,
+and with which origin, is likewise the recording binding's (`recording_clock_domains`).
+Provenance depends on temporal, never the reverse.
+
+The declared window is not a temporal value: it is the binding's `source_clock` and
+`[start_timestamp_ns, end_timestamp_ns)` in `lineage.source`, and it is read through the
+binding.
 
 ```text
 ClockDomain
@@ -250,7 +263,7 @@ Rules every manifest enforces (`check_clock_domains`):
   clock (every ego pose is at its reading's timestamp); CAN is not canonicalized.
 - A frame rate is never part of a clock domain. An Episode sampled on a frame grid
   declares it once, on its `frame_timeline` (`round_half_even(k · 10⁹ / fps)`,
-  `sceneops_core.provenance.frame_time`), whose clock must have origin `unit`.
+  `sceneops_core.temporal.frame_time`), whose clock must have origin `unit`.
 - Normalization changes a timestamp's representation, never its domain. Nothing adds
   an epoch to a relative time, shifts a clock or merges two clocks.
 
@@ -358,6 +371,13 @@ selection are not in it, so they change a revision, not the unit.
 format and import only the standard library, core and storage; native format modules
 (`lerobot.py`, `nuscenes.py` and their synthetic test trees) import only `pyarrow`
 besides those, never a dataset SDK; the workspace lock contains no `lerobot`.
+
+`packages/sceneops-core/tests/test_temporal_boundaries.py`: `sceneops_core.temporal`
+imports only `sceneops_core.common`; importing it, or `PayloadRef`, in a fresh
+interpreter initializes no provenance, Source Registry, RobotRun, Scene or Episode
+module; provenance neither holds nor re-exports a temporal module, and the recording
+clock policy stays with the recording binding. Clock comparability across sources:
+`test_clock_comparability.py`.
 
 Record contracts: `test_source_content.py`; bindings, revisions and pinned inputs:
 `test_provenance_sources.py`; fingerprint: `test_producer_fingerprint.py`; unit and

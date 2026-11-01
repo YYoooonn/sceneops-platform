@@ -15,16 +15,7 @@ from sceneops_core.episodes.schemas import (
     load_canonical_episode_manifest,
 )
 from sceneops_core.episodes.testing import episode_manifest, state
-from sceneops_core.provenance import (
-    ClockDomain,
-    ClockInstance,
-    ClockOrigin,
-    ContentUnitSource,
-    IncomparableClocksError,
-    clock_instance,
-    recording_clock_domains,
-    require_comparable,
-)
+from sceneops_core.provenance import ContentUnitSource, recording_clock_domains
 from sceneops_core.scenes.schemas import (
     SceneManifest,
     UnsupportedSceneManifestVersionError,
@@ -32,6 +23,14 @@ from sceneops_core.scenes.schemas import (
 )
 from sceneops_core.scenes.testing import build_scene_manifest, recording_source
 from sceneops_core.sources.content import content_id_for
+from sceneops_core.temporal import (
+    ClockDomain,
+    ClockInstance,
+    ClockOrigin,
+    IncomparableClocksError,
+    clock_instance,
+    require_comparable,
+)
 
 CONTENT_CHECKSUM = "sha256:" + "c" * 64
 

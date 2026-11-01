@@ -22,13 +22,9 @@ from sceneops_core.episodes.schemas import (
     load_canonical_episode_manifest,
 )
 from sceneops_core.jobs.schemas import JobType, parse_job_params
-from sceneops_core.provenance import (
-    ContentUnitSource,
-    ProducerInfo,
-    frame_index_of,
-    frame_time_ns,
-)
+from sceneops_core.provenance import ContentUnitSource, ProducerInfo
 from sceneops_core.sources import content_id_for
+from sceneops_core.temporal import frame_index_of, frame_time_ns
 
 CHECKSUM = "sha256:" + "c" * 64
 CONTENT_ID = content_id_for(CHECKSUM)

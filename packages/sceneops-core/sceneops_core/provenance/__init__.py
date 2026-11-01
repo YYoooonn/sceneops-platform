@@ -3,23 +3,15 @@ ADR-015 §3, §4, §6).
 
 Platform primitives shared by the Scene and Episode domains, which compose
 them into their own lineage and record types: source bindings and
-revisions, clock domains, the pinned sources builders read, unit identity, revision
+revisions, the pinned sources builders read, unit identity, revision
 identity and the producer fingerprint. Nothing here is a Scene/Episode
 model.
+
+Time semantics are ``sceneops_core.temporal``'s: a source binding asserts
+its unit's clock-origin scope and permitted origins in temporal terms, and
+the dependency runs from provenance to temporal only.
 """
 
-from .clocks import (
-    ClockDomain,
-    ClockDomainError,
-    ClockInstance,
-    ClockOrigin,
-    IncomparableClocksError,
-    OriginScope,
-    check_clock_domains,
-    clock_instance,
-    require_comparable,
-)
-from .frame_time import NS_PER_SECOND, frame_index_of, frame_time_ns
 from .producer import (
     EXECUTION_SCOPED_CONFIG_KEYS,
     PRODUCER_FINGERPRINT_SCHEMA_V1,
@@ -50,7 +42,6 @@ from .revisions import (
     decide_revision_registration,
     manifest_artifact_id_for,
 )
-from .source_time import INT64_MAX, SourceTimestampNs, SourceTimeUnit, promote_to_ns
 from .sources import (
     RECORDING_CLOCK_ORIGIN,
     RECORDING_CLOCK_RESOLUTION_NS,
@@ -68,9 +59,7 @@ from .sources import (
 __all__ = [
     "CANONICAL_DOMAINS",
     "EXECUTION_SCOPED_CONFIG_KEYS",
-    "INT64_MAX",
     "MANIFEST_ARTIFACT_ID_SCHEMA_V1",
-    "NS_PER_SECOND",
     "PRODUCER_FINGERPRINT_SCHEMA_V1",
     "RECORDING_CLOCK_ORIGIN",
     "RECORDING_CLOCK_RESOLUTION_NS",
@@ -78,16 +67,10 @@ __all__ = [
     "UNIT_ID_SCHEMA_V2",
     "UNIT_KEY_MAX_LENGTH",
     "CanonicalDomain",
-    "ClockDomain",
-    "ClockDomainError",
-    "ClockInstance",
-    "ClockOrigin",
     "ContentSourceRevision",
     "ContentUnitSource",
-    "IncomparableClocksError",
     "InconsistentRevisionsError",
     "NonDeterministicProducerError",
-    "OriginScope",
     "PinnedContent",
     "PinnedRecording",
     "ProducerFingerprintMismatchError",
@@ -100,22 +83,14 @@ __all__ = [
     "RevisionPinError",
     "SourceBinding",
     "SourceRevision",
-    "SourceTimeUnit",
-    "SourceTimestampNs",
     "UnitRevisionFacts",
     "canonical_unit_id",
-    "check_clock_domains",
     "check_revision_pin",
-    "clock_instance",
     "compute_producer_fingerprint",
     "decide_revision_registration",
-    "frame_index_of",
-    "frame_time_ns",
     "manifest_artifact_id_for",
     "normalize_build_config",
-    "promote_to_ns",
     "recording_clock_domains",
-    "require_comparable",
     "unit_id_domain",
     "unit_id_for",
 ]

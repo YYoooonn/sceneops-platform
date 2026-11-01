@@ -69,7 +69,7 @@ Rules the schema enforces:
   re-times or replaces them. Sampling, nearest-frame association, pose
   interpolation and synchronization are derived workflows.
 - **Source time** is an integer nanosecond count
-  (`sceneops_core.provenance.source_time`) in exactly one declared clock,
+  (`sceneops_core.temporal.source_time`) in exactly one declared clock,
   never synchronized or converted. An observation's clock is its channel's
   `source_clock` (observation → channel → clock), so channels of one Scene
   may use different clocks. A timestamped structure no channel owns — a

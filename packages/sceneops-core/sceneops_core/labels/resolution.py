@@ -36,11 +36,11 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
-from sceneops_core.provenance import ClockOrigin
 from sceneops_core.scenes.schemas.manifests import (
     SceneManifest,
     SceneObservationGroup,
 )
+from sceneops_core.temporal import ClockOrigin
 
 from .schemas import ObservationAnchor
 
