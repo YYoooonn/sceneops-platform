@@ -223,7 +223,10 @@ native reader or content builder, and no format has both. Current builder bounds
   not see the output schema, so an unforced request identical to one that succeeded before
   the schema changed returns that old run, whose artifacts are then refused at their next
   read; `force: true` produces a current run
-  ([Jobs and pipelines](./jobs-and-pipelines.md)). An incremental learning export reuses
+  ([Jobs and pipelines](./jobs-and-pipelines.md)). An unforced VALIDATE, PROFILE or EXPORT
+  request identical to one that succeeded before the change returns that old Job without
+  reading the artifact, so its success does not show that current readers accept it. An
+  incremental learning export reuses
   its base's shards without reading their aligned artifacts, and curation of an export
   pinning `v1` artifacts is refused. `ALIGNMENT_SEMANTICS_VERSION` is not an input of the
   ALIGN_EPISODE execution key.
@@ -232,8 +235,10 @@ native reader or content builder, and no format has both. Current builder bounds
   feature is not aligned or exported. Without one, alignment carries its video frames
   as reference values (Logical URI and `video_frame` selector; the learning export keeps
   the selector beside the URI) and decodes nothing; `ALIGN_EPISODE` is exercised on a
-  real pusht Episode built without `next.*` (`SUITE=lerobot-episodes`), the learning and
-  LeRobot exports have not been run on a LeRobot Episode. `frame_timeline`,
+  real pusht Episode built without `next.*` (`SUITE=lerobot-episodes`). No suite runs the
+  learning export on a LeRobot Episode (one acceptance run did, on two pusht Episodes:
+  [record](../history/aligned-episode-deployment-acceptance.md)), and the LeRobot export
+  has not been run on one. `frame_timeline`,
   `component_names` and `transition`
   streams have no consumer yet; an event view derived from a `transition` stream
   would need a declared rule (pusht's `next.done` is true on the last two frames of

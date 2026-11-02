@@ -94,6 +94,13 @@ If this is skipped, the old aligned artifact is refused loudly at its next read
 (`validate_aligned_episode`, `profile_aligned_episode`, `export_learning_data`,
 `curate_episodes`) instead of being used with missing context.
 
+Not every request reaches a read. VALIDATE, PROFILE and EXPORT keep their keys across the
+upgrade, so an unforced identical request for a v1 artifact returns the Job that already
+succeeded, `valid: true` included, without opening the object. A v1 pin taken from a reused
+run and followed that way raises no error. Those records are true of the checksum they pin,
+but they do not show that today's readers accept it; use the pins of a forced run
+([measured](../history/aligned-episode-deployment-acceptance.md)).
+
 ## Rejected alternatives
 
 - **Keep the key and replace the object:** breaks write-once and the pinned checksums of

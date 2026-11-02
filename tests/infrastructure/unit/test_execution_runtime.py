@@ -107,6 +107,18 @@ def test_every_service_that_touches_state_takes_its_database_and_bucket_from_the
     assert env[root] == "${TEST_ARTIFACT_ROOT_URI:?}", service
 
 
+def test_the_images_default_to_the_reference_tags_and_a_test_can_name_its_own():
+    """Testing undeployed code must not need the tag the reference stack runs."""
+    services = COMPOSE["services"]
+    assert services["test-api"]["image"] == (
+        "${TEST_API_IMAGE:-sceneops-platform/api:local}"
+    )
+    for service in ("test-worker-jobs", "test-worker-pipeline"):
+        assert services[service]["image"] == (
+            "${TEST_WORKER_IMAGE:-sceneops-platform/worker:local}"
+        )
+
+
 def test_the_broker_is_the_runtimes_own_redis():
     for name, service in COMPOSE["services"].items():
         for variable, value in _environment(service).items():

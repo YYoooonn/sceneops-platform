@@ -176,6 +176,12 @@ workers, and a Redis of its own. Only the PostgreSQL and MinIO *servers* are sha
 the reference environment, as for `test-integration`; its api, workers and Redis are
 neither used nor reconfigured, and the reference database and bucket are not opened.
 
+To test code that is not deployed, build images under other tags and name them with
+`TEST_WORKER_IMAGE` and `TEST_API_IMAGE`. Rebuilding `worker:local` or `api:local` instead
+moves the tags the reference stack runs: its running containers keep the old image, and
+its next `up` recreates them on the new one. The API computes execution keys, so a change
+to one needs both images.
+
 The suite needs one RobotRun of the golden contract. Nothing is copied from the reference
 environment: the `baseline` fixture runs the production create-or-verify path
 (`canonical_bootstrap.sh`, `smoke-1`) against the runtime's API, publishing the locked
