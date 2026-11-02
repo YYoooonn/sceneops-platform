@@ -56,6 +56,7 @@ from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 from sceneops_worker.jobs.dataset._aligned_episode_resolution import (
+    require_member_source_revision,
     resolve_and_verify_aligned_artifact,
 )
 
@@ -171,6 +172,13 @@ class ExportLearningDataJobHandler(
                 episode_id=item.episode_id,
                 aligned_artifact_id=item.aligned_artifact_id,
                 expected_checksum=item.aligned_artifact_checksum,
+            )
+            await require_member_source_revision(
+                context,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                episode_id=item.episode_id,
+                artifact=artifact,
             )
             checksum = item.aligned_artifact_checksum or record.checksum
             if checksum is None:

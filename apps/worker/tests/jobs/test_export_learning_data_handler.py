@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -42,6 +43,7 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset._aligned_episode_resolution import (
+    AlignedArtifactNotEligibleError,
     AlignedArtifactChecksumMismatchError,
     AlignedArtifactNotFoundError,
 )
@@ -83,6 +85,11 @@ def _checksum(data: bytes) -> str:
     return f"sha256:{hashlib.sha256(data).hexdigest()}"
 
 
+_MEMBER = SimpleNamespace(
+    manifest_artifact_id="art-src-1", manifest_checksum="sha256:" + "a" * 64
+)
+
+
 def _aligned_record(
     *, artifact_id: str, episode_id: str, checksum: str | None, uri: str
 ) -> ArtifactRecord:
@@ -102,6 +109,11 @@ def _make_context(
     bytes_by_uri: dict[str, bytes | None],
 ) -> MagicMock:
     context = MagicMock()
+    context.episode_store.get_member_revision = AsyncMock(
+        side_effect=lambda **scope: _MEMBER
+        if (scope["dataset_id"], scope["dataset_version"]) == ("d1", "v1")
+        else None
+    )
 
     async def _get(artifact_id: str):
         return records_by_artifact_id.get(artifact_id)
@@ -373,3 +385,46 @@ class TestStructuralValidationFailureBlocksWholeExport:
         context.analytics_writer.write_learning_table_shard.assert_not_awaited()
         context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()
+
+
+class TestDatasetVersionScope:
+    """An aligned record names no DatasetVersion, so an export checks each input's
+    source revision against the version it is exporting, before writing anything."""
+
+    def _context(self) -> MagicMock:
+        data = _artifact_bytes("ep-1")
+        uri = "mem://episodes/ep-1/aligned/x.json"
+        return _make_context(
+            records_by_artifact_id={
+                "art-aligned-1": _aligned_record(
+                    artifact_id="art-aligned-1",
+                    episode_id="ep-1",
+                    checksum=_checksum(data),
+                    uri=uri,
+                )
+            },
+            bytes_by_uri={uri: data},
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_episode_outside_the_version_blocks_the_export(self) -> None:
+        context = self._context()
+        with pytest.raises(AlignedArtifactNotEligibleError, match="not a member"):
+            await ExportLearningDataJobHandler().run(
+                _make_request(context, dataset_id="d2")
+            )
+        assert context._write_calls == []
+        context.artifact_record_store.register.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_an_artifact_of_another_revision_blocks_the_export(self) -> None:
+        context = self._context()
+        context.episode_store.get_member_revision = AsyncMock(
+            return_value=SimpleNamespace(
+                manifest_artifact_id="art-src-2",
+                manifest_checksum="sha256:" + "b" * 64,
+            )
+        )
+        with pytest.raises(AlignedArtifactNotEligibleError, match="computed from"):
+            await ExportLearningDataJobHandler().run(_make_request(context))
+        assert context._write_calls == []

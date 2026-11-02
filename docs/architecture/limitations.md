@@ -145,13 +145,13 @@ native reader or content builder, and no format has both. Current builder bounds
   A recording pipeline composes only the revisions of its own single RobotRun and
   domain; a version of several RobotRuns or of both domains is a standalone
   composition. Registered units and revisions are never changed or removed.
-- Validation and profiling address revisions by pin. Alignment and everything derived
-  from it (aligned-episode keys, learning exports, curation) are scoped to the
-  DatasetVersion they were produced for: an aligned revision of the same Episode
-  revision is written under each DatasetVersion that aligns it with another recipe. A
-  second DatasetVersion aligning a revision with a recipe an earlier one used fails
-  (`ArtifactRecordConflictError`): the bytes are equal, so the record id is, and the URI
-  is not. The object it wrote first stays unreferenced.
+- Validation and profiling address revisions by pin. An aligned artifact and its reports
+  belong to the source revision and the recipe, and every DatasetVersion pinning that revision
+  shares them; a request naming a version that does not is refused
+  ([ADR-022](../adr/022-aligned-artifact-identity.md)). Learning exports and curation are
+  owned by the DatasetVersion they were produced for. An alignment that crashes between
+  its write and its commit leaves an object with no record, which the next attempt adopts;
+  nothing removes it if no attempt comes.
 - A composition selector selects by source (a RobotRun or a SourceContent) and
   producer fingerprint only. A composition is one PostgreSQL transaction, whose commit-time membership check counts
   each version's members once; the largest composition tested has a handful of

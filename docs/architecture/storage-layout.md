@@ -150,9 +150,23 @@ Canonical EpisodeManifest revisions follow the same rule at
 {canonical_root}/episodes/{episode_id}/manifest-{sha256}.json
 ```
 
-(`EpisodeArtifactStore.publish_canonical_manifest`). Derived aligned-episode
-artifacts are keyed by the DatasetVersion they were aligned for, under
-`{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/aligned/`.
+(`EpisodeArtifactStore.publish_canonical_manifest`).
+
+Derived aligned-episode artifacts and their reports are functions of the source
+revision and the recipe, so they are keyed by those alone, and every DatasetVersion
+pinning the revision shares one object
+([ADR-022](../adr/022-aligned-artifact-identity.md)):
+
+```text
+{aligned_root}/{episode_id}/{source_sha256[:16]}/{alignment_key[:16]}.json
+{aligned_root}/{episode_id}/{source_sha256[:16]}/{alignment_key[:16]}.{validation|profile}-{sha256}.json
+```
+
+(`aligned_root` is `{ARTIFACT_ROOT_URI}/aligned_episodes`,
+`ArtifactSettings.aligned_episode_prefix`.) Each has an ArtifactRecord owned by the
+Episode with no DatasetVersion. A record states its own location: one written under
+`{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/aligned/` by an
+earlier deployment stays readable there and is reused rather than written again.
 
 Observation payloads are written write-once by both recording builders (Scene
 and Episode), through one shared store, at

@@ -171,7 +171,9 @@ explicit alignment config; it is the first stage of
 pinned aligned revision. The recipe key covers the full config, the
 semantics version, the alignment clock and the artifact schema version; the
 artifact is write-once at its key and its ArtifactRecord id derives from the
-Episode id and checksum. Its DatasetVersion scope is the Episode's. The artifact
+Episode id and checksum. It belongs to its source revision and recipe, is shared by
+every DatasetVersion pinning that revision, and each Job using it checks that the one
+it names does ([ADR-022](../adr/022-aligned-artifact-identity.md)). The artifact
 states the clock instance the source manifest issues, and a reader refuses an
 artifact of another schema version
 ([Robot learning data](./robot-learning-data.md) §4). The canonical Episode is not

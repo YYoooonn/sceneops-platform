@@ -25,6 +25,7 @@ class ArtifactSettings(StorageSettings):
 
     dataset_prefix: str = "datasets"
     canonical_prefix: str = "canonical"
+    aligned_episode_prefix: str = "aligned_episodes"
     run_prefix: str = "runs"
     analytics_prefix: str = "analytical"
     robot_run_prefix: str = "robot_runs"
@@ -45,6 +46,10 @@ class ArtifactSettings(StorageSettings):
     @property
     def canonical_root_uri(self) -> str:
         return join_uri(self.root_uri, self.canonical_prefix)
+
+    @property
+    def aligned_episode_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.aligned_episode_prefix)
 
     @property
     def run_root_uri(self) -> str:

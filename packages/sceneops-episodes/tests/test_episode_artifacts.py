@@ -39,7 +39,7 @@ def _store(tmp_path) -> EpisodeArtifactStore:
     return EpisodeArtifactStore(
         artifact_store=LocalArtifactStore(root_uri=str(tmp_path)),
         canonical_root_uri=str(tmp_path / "canonical"),
-        dataset_root_uri=str(tmp_path / "datasets"),
+        aligned_root_uri=str(tmp_path / "aligned_episodes"),
         payload_root_uri=str(tmp_path / "payloads"),
     )
 
@@ -103,18 +103,40 @@ class TestCanonicalEpisodeManifestStorage:
 
 
 class TestAlignedEpisodeUri:
+    def test_names_the_episode_revision_and_recipe_and_no_dataset_version(
+        self, tmp_path
+    ) -> None:
+        uri = _store(tmp_path).aligned_episode_uri(
+            episode_id="ep-1",
+            source_manifest_sha256="a" * 64,
+            alignment_key="k" * 64,
+        )
+        assert uri == str(
+            tmp_path / "aligned_episodes" / "ep-1" / ("a" * 16) / f"{'k' * 16}.json"
+        )
+
+    def test_changes_with_the_artifact_schema_version(self, tmp_path) -> None:
+        config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=1)
+        uris = {
+            _store(tmp_path).aligned_episode_uri(
+                episode_id="ep-1",
+                source_manifest_sha256="a" * 64,
+                alignment_key=alignment_key(
+                    config, "v3", DEFAULT_CLOCK, artifact_schema_version=schema
+                ),
+            )
+            for schema in ("v2", "v3")
+        }
+        assert len(uris) == 2
+
     def test_changes_when_source_hash_changes(self, tmp_path) -> None:
         store = _store(tmp_path)
         uri_a = store.aligned_episode_uri(
-            dataset_id="d1",
-            dataset_version="v1",
             episode_id="ep-1",
             source_manifest_sha256="a" * 64,
             alignment_key="k" * 64,
         )
         uri_b = store.aligned_episode_uri(
-            dataset_id="d1",
-            dataset_version="v1",
             episode_id="ep-1",
             source_manifest_sha256="b" * 64,
             alignment_key="k" * 64,
@@ -124,15 +146,11 @@ class TestAlignedEpisodeUri:
     def test_changes_when_alignment_key_changes(self, tmp_path) -> None:
         store = _store(tmp_path)
         uri_a = store.aligned_episode_uri(
-            dataset_id="d1",
-            dataset_version="v1",
             episode_id="ep-1",
             source_manifest_sha256="a" * 64,
             alignment_key="k" * 64,
         )
         uri_b = store.aligned_episode_uri(
-            dataset_id="d1",
-            dataset_version="v1",
             episode_id="ep-1",
             source_manifest_sha256="a" * 64,
             alignment_key="j" * 64,
@@ -142,8 +160,6 @@ class TestAlignedEpisodeUri:
     def test_identical_for_semantically_identical_inputs(self, tmp_path) -> None:
         store = _store(tmp_path)
         kwargs = dict(
-            dataset_id="d1",
-            dataset_version="v1",
             episode_id="ep-1",
             source_manifest_sha256="a" * 64,
             alignment_key="k" * 64,
@@ -178,8 +194,6 @@ class TestWriteAlignedEpisode:
         )
 
         result = await store.write_aligned_episode(
-            dataset_id="d1",
-            dataset_version="v1",
             episode_id="ep-1",
             source_manifest_sha256="a" * 64,
             alignment_key=key,
@@ -228,8 +242,6 @@ class TestAlignedEpisodeIsWriteOnce:
             config, first.aligned_episode.alignment_semantics_version, DEFAULT_CLOCK
         )
         kwargs = dict(
-            dataset_id="d1",
-            dataset_version="v1",
             episode_id="ep-1",
             source_manifest_sha256="a" * 64,
             alignment_key=key,
@@ -290,8 +302,6 @@ class TestSchemaUpgradeOnStorage:
 
     def _location(self, key: str) -> dict:
         return dict(
-            dataset_id="d1",
-            dataset_version="v1",
             episode_id="ep-1",
             source_manifest_sha256=self.SOURCE_SHA,
             alignment_key=key,
@@ -399,8 +409,6 @@ class TestAlignedEpisodeReportStorage:
     @staticmethod
     def _kwargs():
         return dict(
-            dataset_id="d1",
-            dataset_version="v1",
             episode_id="ep-1",
             source_manifest_sha256="a" * 64,
             alignment_key="k" * 64,

@@ -10,9 +10,11 @@ one object however many DatasetVersions pin it. Reading a canonical
 manifest always goes through a pinned checksum: the bytes are verified
 before they are parsed, and parsing requires canonical form. Observation
 payloads go through the shared :class:`ObservationPayloadStore`. Derived
-aligned-episode artifacts and their reports are keyed by the DatasetVersion
-they were aligned for, under
-``{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/aligned/``.
+aligned-episode artifacts and their reports are functions of the source revision
+and the recipe, so they are keyed by those alone, and every DatasetVersion that
+pins the revision shares one object::
+
+    {aligned_root}/{episode_id}/{source_hash}/{alignment_key}.json
 """
 
 from __future__ import annotations
@@ -51,6 +53,12 @@ class EpisodeManifestWriteConflictError(WriteOnceConflictError):
     """A write-once manifest key already holds different bytes."""
 
 
+def canonical_document_bytes(document: SceneOpsBaseModel) -> bytes:
+    """The exact bytes stored for an aligned artifact or a report of one, which
+    are what its checksum and so its ArtifactRecord id are computed over."""
+    return _canonical_bytes(document.to_artifact_dict())
+
+
 def _canonical_bytes(payload: dict[str, Any]) -> bytes:
     """Deterministic, compact JSON encoding used for every Episode-domain
     artifact this store writes -- the exact bytes returned here are the
@@ -84,12 +92,12 @@ class EpisodeArtifactStore:
         *,
         artifact_store: ArtifactStore,
         canonical_root_uri: str,
-        dataset_root_uri: str,
+        aligned_root_uri: str,
         payload_root_uri: str,
     ) -> None:
         self.artifact_store = artifact_store
         self.canonical_root_uri = canonical_root_uri
-        self.dataset_root_uri = dataset_root_uri
+        self.aligned_root_uri = aligned_root_uri
         self.payload_store = ObservationPayloadStore(
             artifact_store=artifact_store, payload_root_uri=payload_root_uri
         )
@@ -97,14 +105,6 @@ class EpisodeArtifactStore:
     # ------------------------------------------------------------------
     # URI helpers
     # ------------------------------------------------------------------
-
-    def _version_root_uri(self, *, dataset_id: str, dataset_version: str) -> str:
-        return self.artifact_store.join_uri(
-            self.dataset_root_uri,
-            dataset_id,
-            "versions",
-            dataset_version,
-        )
 
     def canonical_manifest_uri(self, *, episode_id: str, checksum: str) -> str:
         return self.artifact_store.join_uri(
@@ -117,14 +117,15 @@ class EpisodeArtifactStore:
     def aligned_episode_uri(
         self,
         *,
-        dataset_id: str,
-        dataset_version: str,
         episode_id: str,
         source_manifest_sha256: str,
         alignment_key: str,
     ) -> str:
-        """datasets/{dataset_id}/versions/{dataset_version}/episodes/{episode_id}/aligned/{source_hash}/{alignment_key}.json
-        (SceneOps V2 Request 2.3 §14).
+        """{aligned_root}/{episode_id}/{source_hash}/{alignment_key}.json.
+
+        No DatasetVersion: nothing it decides reaches the bytes, and one that
+        named it would give equal bytes, and so one record id, two locations
+        (ADR-022).
 
         Two independent, truncated (64-bit, collision-negligible at this
         scale) hash segments rather than one combined identity hash --
@@ -135,14 +136,9 @@ class EpisodeArtifactStore:
         tell which one changed between two runs; a single opaque combined
         hash could not.
         """
-        version_root = self._version_root_uri(
-            dataset_id=dataset_id, dataset_version=dataset_version
-        )
         return self.artifact_store.join_uri(
-            version_root,
-            "episodes",
+            self.aligned_root_uri,
             episode_id,
-            "aligned",
             source_manifest_sha256[:16],
             f"{alignment_key[:16]}.json",
         )
@@ -209,16 +205,12 @@ class EpisodeArtifactStore:
     async def write_aligned_episode(
         self,
         *,
-        dataset_id: str,
-        dataset_version: str,
         episode_id: str,
         source_manifest_sha256: str,
         alignment_key: str,
         artifact: AlignedEpisodeArtifact,
     ) -> EpisodeArtifactWriteResult:
         uri = self.aligned_episode_uri(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
             episode_id=episode_id,
             source_manifest_sha256=source_manifest_sha256,
             alignment_key=alignment_key,
@@ -229,7 +221,7 @@ class EpisodeArtifactStore:
         written = await write_once(
             self.artifact_store,
             uri,
-            _canonical_bytes(artifact.to_artifact_dict()),
+            canonical_document_bytes(artifact),
             conflict=EpisodeManifestWriteConflictError,
             verify=False,
         )
@@ -253,8 +245,6 @@ class EpisodeArtifactStore:
     def aligned_episode_report_uri(
         self,
         *,
-        dataset_id: str,
-        dataset_version: str,
         episode_id: str,
         source_manifest_sha256: str,
         alignment_key: str,
@@ -264,18 +254,13 @@ class EpisodeArtifactStore:
         """Sibling of the aligned artifact's own URI -- same two identity
         segments (source hash, alignment key), suffixed by report_kind
         ("validation" | "profile") and the report's own checksum, so a
-        listing of the ``aligned/{hash}/`` prefix shows the artifact and its
+        listing of the ``{source_hash}/`` prefix shows the artifact and its
         analyses grouped together by name (SceneOps V2 Request 2.4 §30) and a
         re-run of a changed validator or profiler adds a revision instead of
         replacing the one a record pins."""
-        version_root = self._version_root_uri(
-            dataset_id=dataset_id, dataset_version=dataset_version
-        )
         return self.artifact_store.join_uri(
-            version_root,
-            "episodes",
+            self.aligned_root_uri,
             episode_id,
-            "aligned",
             source_manifest_sha256[:16],
             f"{alignment_key[:16]}.{report_kind}-{checksum_hex(checksum)}.json",
         )
@@ -283,18 +268,14 @@ class EpisodeArtifactStore:
     async def write_aligned_episode_report(
         self,
         *,
-        dataset_id: str,
-        dataset_version: str,
         episode_id: str,
         source_manifest_sha256: str,
         alignment_key: str,
         report_kind: str,
         report: SceneOpsBaseModel,
     ) -> EpisodeArtifactWriteResult:
-        data = _canonical_bytes(report.to_artifact_dict())
+        data = canonical_document_bytes(report)
         uri = self.aligned_episode_report_uri(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
             episode_id=episode_id,
             source_manifest_sha256=source_manifest_sha256,
             alignment_key=alignment_key,

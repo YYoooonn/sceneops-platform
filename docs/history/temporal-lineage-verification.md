@@ -84,6 +84,8 @@ The first real runs failed in ways no synthetic fixture had shown, and all of th
    derives from (Episode, checksum), and the URI names the version, so the Job fails with
    `ArtifactRecordConflictError`. `limitations.md` said the opposite and was corrected. Not fixed here: it
    would change aligned artifact identity, which P5.3 preserves. A test pins the current behaviour.
+   (Follow-up: decided by [ADR-022](../adr/022-aligned-artifact-identity.md), with its own
+   [record](./aligned-artifact-identity-acceptance.md).)
 2. **Real Scenes and Episodes of one RobotRun share no clock**, which falsified an assumption in the first
    version of the acceptance test.
 3. **Two controls had nothing to forge on real data.** Every observation is on its Scene's window clock, and

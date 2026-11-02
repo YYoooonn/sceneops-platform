@@ -114,12 +114,15 @@ source's vocabulary. See [Derived layer](./derived-layer.md).
 
 **Episode learning.** `EPISODE_LEARNING_DATA_BUILDING` aligns pinned Episode
 revisions (`align_episode` params: the DatasetVersion, `episodes`, each an
-`episode_id` either resolved to the revision that DatasetVersion pins or pinned by
-`source_artifact_id` + `source_manifest_sha256` to a registered revision, and one
+`episode_id` resolved to the revision that DatasetVersion pins, optionally stating that
+same revision by `source_artifact_id` + `source_manifest_sha256`, and one
 `alignment_config`) and hands the aligned revisions to `export_learning_data` in the
 export's own input shape (`export_inputs`: episode id, aligned artifact id,
-checksum). The export validates every aligned input and fails rather than
-publishing over an invalid one. The canonical Episodes are never rewritten.
+checksum). An aligned artifact is shared by every DatasetVersion pinning its source
+revision, and each Job checks that the version it names does
+([ADR-022](../adr/022-aligned-artifact-identity.md)). The export validates every
+aligned input and fails rather than publishing over an invalid one. The canonical
+Episodes are never rewritten.
 
 ### 2.1 Standalone Jobs
 
@@ -482,7 +485,10 @@ content, a retry or concurrent producer of identical content converges on the sa
 object and record, and a record that disagrees with an existing one on kind,
 location, checksum or size fails loudly (`ArtifactRecordConflictError`). Changed
 content for the same logical artifact is a new revision beside the old one. See
-[Storage layout](./storage-layout.md).
+[Storage layout](./storage-layout.md). `ALIGN_EPISODE` and the reports of its artifacts
+look for the record before writing, so a result that exists is reused where its record
+says it is, without a write; PostgreSQL and object storage share no transaction, so a
+crash between a write and its commit leaves an object for the next attempt to adopt.
 
 Ownership is recorded by `ArtifactOwnerType` / `owner_id` or one of the direct scoping
 columns (`dataset_id`, `scene_id`, `pipeline_run_id`, ...); see

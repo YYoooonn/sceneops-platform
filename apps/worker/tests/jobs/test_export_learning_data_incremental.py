@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -143,6 +144,12 @@ class _Fixture:
             return self.bytes_by_uri.get(uri)
 
         context.artifact_record_store.get = AsyncMock(side_effect=_get)
+        context.episode_store.get_member_revision = AsyncMock(
+            return_value=SimpleNamespace(
+                manifest_artifact_id="art-src-1",
+                manifest_checksum="sha256:" + "a" * 64,
+            )
+        )
         context.episode_artifact_store.read_aligned_episode_bytes = AsyncMock(
             side_effect=_read_bytes
         )
@@ -276,8 +283,8 @@ async def test_incremental_export_new_revision_of_existing_episode(
 
     # A second, distinct aligned revision of the SAME episode_id -- must
     # coexist as a distinct EpisodeRef, never dedup by episode_id alone.
-    # Built with a different source_artifact_id so its bytes (and
-    # therefore checksum) differ from the base's own revision.
+    # The same source revision under another recipe, the only other aligned
+    # revision a DatasetVersion pinning that source can use.
     manifest = episode_manifest(
         [
             state("/vehicle/odom", 0, x=0.0),
@@ -286,15 +293,15 @@ async def test_incremental_export_new_revision_of_existing_episode(
         ],
         window=(0, 1_000_000_001),
     )
-    config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=500_000)
+    config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=400_000)
     ctx = TemporalSourceContext(source_clock=DEFAULT_CLOCK)
     aligned = align_episode(manifest, config, ctx, episode_id="ep-0")
     artifact_r2 = AlignedEpisodeArtifact(
         source_revision=EpisodeSourceRevision(
             episode_id="ep-0",
             episode_manifest_uri="mem://episodes/ep-0.json",
-            source_artifact_id="art-src-2",
-            source_manifest_sha256="b" * 64,
+            source_artifact_id="art-src-1",
+            source_manifest_sha256="a" * 64,
         ),
         aligned_episode=aligned,
     )

@@ -79,7 +79,7 @@ def create_worker_context(
         episode_artifact_store=EpisodeArtifactStore(
             artifact_store=artifact_store,
             canonical_root_uri=settings.canonical_root_uri,
-            dataset_root_uri=settings.dataset_root_uri,
+            aligned_root_uri=settings.aligned_episode_root_uri,
             payload_root_uri=settings.observation_payload_root_uri,
         ),
         run_artifact_store=RunArtifactStore(

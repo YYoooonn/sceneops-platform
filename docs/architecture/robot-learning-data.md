@@ -163,7 +163,12 @@ Three versions answer different questions and move independently:
 | --- | --- | --- |
 | `ALIGNMENT_SEMANTICS_VERSION` | how the algorithm behaves | `v3` |
 | `ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION` | the shape of the persisted artifact | `v2` |
-| `alignment_key` | where this recipe's artifact is stored: the config hash, both versions above and the clock | derived |
+| `alignment_key` | where this recipe's artifact is stored under its source revision: the config hash, both versions above and the clock | derived |
+
+An aligned artifact is identified by its source revision and that recipe. No
+DatasetVersion reaches its bytes, its location or its record, so every DatasetVersion
+pinning the revision shares it, and each Job using it checks that the one it names does
+([ADR-022](../adr/022-aligned-artifact-identity.md)).
 
 The artifact schema version also participates in the ALIGN_EPISODE execution key, so a
 Job that succeeded under an earlier schema is not reused. Every read of a persisted

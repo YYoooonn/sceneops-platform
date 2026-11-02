@@ -123,9 +123,9 @@ for input in $(echo "$EXPORT_INPUTS" | jq -c '.[]'); do
   ALIGNED_RECORD="$(api_get "$API_BASE_URL" "/artifacts/$ALIGNED_ID")"
   check "$ALIGNED_ID is derived from the Episode and the artifact checksum, not random" \
     [ "$(echo "$ALIGNED_ID" | grep -c '^aligned-')" = 1 ]
-  check "it is a checksum-pinned aligned_episode_manifest in the Episode's DatasetVersion" \
-    [ "$(echo "$ALIGNED_RECORD" | jq -r --arg c "$ALIGNED_CHECKSUM" --arg e "$EPISODE_ID" --arg ds "$DATASET_ID" --arg v "$DATASET_VERSION" \
-        '[.artifact.kind, .artifact.checksum, .artifact.ownerId, .artifact.datasetId, .artifact.datasetVersion] | join(",") == ("aligned_episode_manifest," + $c + "," + $e + "," + $ds + "," + $v)')" = true ]
+  check "it is a checksum-pinned aligned_episode_manifest owned by the Episode, in no DatasetVersion" \
+    [ "$(echo "$ALIGNED_RECORD" | jq -r --arg c "$ALIGNED_CHECKSUM" --arg e "$EPISODE_ID" \
+        '[.artifact.kind, .artifact.checksum, .artifact.ownerId] == ["aligned_episode_manifest", $c, $e] and .artifact.datasetId == null and .artifact.datasetVersion == null')" = true ]
   check "the record carries the alignment clock and the exact source revision it consumed" \
     [ "$(echo "$ALIGNED_RECORD" | jq -r --argjson pins "$PINS" --arg e "$EPISODE_ID" \
         '.artifact.metadata.source_artifact_id == ($pins[] | select(.episode_id == $e) | .source_artifact_id) and (.artifact.metadata.source_clock | length) > 0')" = true ]

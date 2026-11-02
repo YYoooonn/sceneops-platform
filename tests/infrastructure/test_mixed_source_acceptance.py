@@ -650,7 +650,8 @@ def temporal(api: Api, recording: dict, nuscenes: dict, pusht: dict, by_pins: di
             "dataset_id": DATASET, "dataset_version": version, "alignment_config": config,
         })  # fmt: skip
 
-    # Another recipe than the "pins" version aligned: see the limitation test below.
+    # Another recipe than the "pins" version aligned, so a reference to this artifact
+    # below is to one only this version's journey produced.
     recording_aligned = aligned(episode, {**ALIGNMENT, "target_frequency_hz": 2.0})
     native_aligned = [aligned(p, NATIVE_ALIGNMENT) for p in sorted(native, key=lambda p: p["unit_id"])]
     keys = {"dataset_id": DATASET, "dataset_version": version}
@@ -682,19 +683,30 @@ def temporal(api: Api, recording: dict, nuscenes: dict, pusht: dict, by_pins: di
     }
 
 
-def test_a_second_version_aligning_one_recipe_of_a_revision_is_refused_today(
+def test_a_second_version_aligning_one_recipe_of_a_revision_shares_the_artifact(
     api: Api, temporal: dict, recording: dict
 ) -> None:
-    """A known limitation, pinned so a fix has to update limitations.md: equal bytes
-    mean one ArtifactRecord id while the URI names the DatasetVersion, so the "pins"
-    version's alignment of this recipe conflicts here, loudly."""
+    """Through the deployed workers: the "pins" and the temporal version pin one
+    revision and use one recipe, so they get one record and one object (ADR-022)."""
     (episode,) = [p for p in recording["pins"] if p["domain"] == "episode"]
-    job = _job(api, "align_episode", {
-        "episodes": [{"episode_id": episode["unit_id"], "source_artifact_id": episode["manifest_artifact_id"],
-                      "source_manifest_sha256": episode["manifest_checksum"].removeprefix("sha256:")}],
-        "dataset_id": DATASET, "dataset_version": temporal["version"], "alignment_config": ALIGNMENT,
-    })  # fmt: skip
-    assert job["status"] == "failed" and "already registered" in json.dumps(job["error"])
+
+    def aligned(version: str) -> dict:
+        return _succeeded(api, "align_episode", {
+            "episodes": [{"episode_id": episode["unit_id"], "source_artifact_id": episode["manifest_artifact_id"],
+                          "source_manifest_sha256": episode["manifest_checksum"].removeprefix("sha256:")}],
+            "dataset_id": DATASET, "dataset_version": version, "alignment_config": ALIGNMENT,
+        })["aligned"][0]  # fmt: skip
+
+    first = aligned("pins")
+    before = (_rows(), _objects())
+    second = aligned(temporal["version"])
+    assert second["aligned_artifact_id"] == first["aligned_artifact_id"]
+    assert second["aligned_artifact_uri"] == first["aligned_artifact_uri"]
+    assert second["aligned_artifact_checksum"] == first["aligned_artifact_checksum"]
+    assert _objects() == before[1]
+    record = api.get(f"/artifacts/{first['aligned_artifact_id']}")["artifact"]
+    assert record["ownerId"] == episode["unit_id"]
+    assert record["datasetId"] is None and record["datasetVersion"] is None
 
 
 def test_every_derived_context_is_what_its_pinned_manifest_issues(

@@ -159,9 +159,10 @@ class _Env:
             registration = await register_source_snapshot(
                 context=self.context(session), descriptor_uri=published.descriptor_uri
             )
+        self.snapshot_id = registration.snapshot.snapshot_id
         params = BuildSnapshotEpisodesJobParams.model_validate(
             {
-                "snapshot_id": registration.snapshot.snapshot_id,
+                "snapshot_id": self.snapshot_id,
                 "build_config": BUILD_CONFIG,
             }
         )
@@ -235,14 +236,13 @@ class _Env:
         checksum = "sha256:" + hashlib.sha256(old).hexdigest()
         async with get_async_sessionmaker()() as session:
             context = self.context(session)
-            uri = context.episode_artifact_store.aligned_episode_uri(
-                dataset_id=self.dataset_id,
-                dataset_version=VERSION,
-                episode_id=revision.episode_id,
-                source_manifest_sha256=sha,
-                alignment_key=_v1_alignment_key(
-                    aligned.alignment_semantics_version, aligned.source_clock
-                ),
+            key = _v1_alignment_key(
+                aligned.alignment_semantics_version, aligned.source_clock
+            )
+            # Where that deployment wrote it: under the DatasetVersion.
+            uri = (
+                f"{self.settings.dataset_root_uri}/{self.dataset_id}/versions/{VERSION}"
+                f"/episodes/{revision.episode_id}/aligned/{sha[:16]}/{key[:16]}.json"
             )
             await self.store.write_bytes(uri, old)
             artifact_id = aligned_episode_artifact_id(
@@ -411,21 +411,19 @@ async def test_control_new_bytes_at_the_unchanged_key_conflict_on_real_minio(env
         aligned_episode=aligned,
     )
     location = dict(
-        dataset_id=env.dataset_id,
-        dataset_version=VERSION,
         episode_id=first.episode_id,
         source_manifest_sha256=sha,
     )
     async with get_async_sessionmaker()() as session:
         store = env.context(session).episode_artifact_store
+        v1_key = _v1_alignment_key(aligned.alignment_semantics_version, clock)
+        control_uri = store.aligned_episode_uri(alignment_key=v1_key, **location)
+        await env.store.write_bytes(control_uri, old_bytes)
         with pytest.raises(EpisodeManifestWriteConflictError):
             await store.write_aligned_episode(
-                alignment_key=_v1_alignment_key(
-                    aligned.alignment_semantics_version, clock
-                ),
-                artifact=artifact,
-                **location,
+                alignment_key=v1_key, artifact=artifact, **location
             )
+        assert await env.store.read_bytes(control_uri) == old_bytes
         assert await env.store.read_bytes(old_uri) == old_bytes
 
         # The same write at the current key lands, and a retry is a no-op.

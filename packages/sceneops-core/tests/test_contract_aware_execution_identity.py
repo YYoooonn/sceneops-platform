@@ -252,3 +252,31 @@ def test_the_analytics_export_runs_as_a_job_and_in_no_pipeline() -> None:
     }
     assert JobType.EXPORT_LEARNING_DATA in task_types
     assert JobType.EXPORT_ANALYTICS_SNAPSHOT not in task_types
+
+
+def test_aligning_one_recipe_of_a_revision_from_two_versions_is_two_executions() -> (
+    None
+):
+    """They reach one artifact, and each asserts its own DatasetVersion pins the
+    revision: a Job of one version must not answer the other's request (ADR-022)."""
+    episodes = [{"episode_id": "e", "source_manifest_sha256": "a" * 64}]
+    config = {"target_frequency_hz": 10.0}
+
+    def key(version: str, episodes=episodes, config=config) -> str:
+        return compute_execution_key(
+            kind="job",
+            type=JobType.ALIGN_EPISODE.value,
+            dataset_id="d",
+            dataset_version=version,
+            params=params_for_execution_key(
+                JobType.ALIGN_EPISODE,
+                {"episodes": episodes, "alignment_config": config},
+            ),
+        )
+
+    assert key("a") == key("a")
+    assert key("a") != key("b")
+    assert key("a") != key("a", config={"target_frequency_hz": 5.0})
+    assert key("a") != key(
+        "a", episodes=[{"episode_id": "e", "source_manifest_sha256": "b" * 64}]
+    )
