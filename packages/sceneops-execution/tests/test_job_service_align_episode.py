@@ -500,13 +500,18 @@ class TestUnrelatedJobTypeRegression:
         )
         assert key == direct_key
 
-    def test_only_align_episode_states_the_aligned_artifact_schema(self) -> None:
+    def test_only_jobs_that_read_or_write_the_artifact_state_its_schema(self) -> None:
         from sceneops_core.executions import params_for_execution_key
 
+        stating = {
+            JobType.ALIGN_EPISODE,
+            JobType.VALIDATE_ALIGNED_EPISODE,
+            JobType.PROFILE_ALIGNED_EPISODE,
+        }
         for job_type in JobType:
             params = params_for_execution_key(job_type, {"episode_id": EPISODE_ID})
             assert ("aligned_artifact_schema_version" in params) == (
-                job_type == JobType.ALIGN_EPISODE
+                job_type in stating
             )
 
 

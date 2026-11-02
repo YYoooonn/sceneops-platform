@@ -9,6 +9,7 @@ from sceneops_core.episodes.alignment import (
     ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION,
     ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION,
 )
+from sceneops_core.episodes.learning_export import LEARNING_DATA_SCHEMA_VERSION
 from sceneops_core.jobs.schemas.enums import JobType
 
 
@@ -64,6 +65,31 @@ def _align_episode_transform(params: dict[str, Any]) -> dict[str, Any]:
     return transformed
 
 
+def _aligned_analysis_transform(
+    *, semantics_key: str, semantics_version: str
+) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """VALIDATE_ALIGNED_EPISODE / PROFILE_ALIGNED_EPISODE: the lineage-only
+    ``aligned_artifact_id`` is stripped (see _exclude_keys), and two contracts
+    that are no job input are injected, read from the real constants.
+
+    The result of either Job is a statement about the aligned artifact as a
+    reader of a given schema and a given analysis read it. Without the schema
+    version, a request after an upgrade would be answered by a Job that
+    succeeded before it, ``valid: true`` included, for an artifact today's
+    reader refuses."""
+
+    strip_lineage = _exclude_keys("aligned_artifact_id")
+
+    def transform(params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **strip_lineage(params),
+            "aligned_artifact_schema_version": ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION,
+            semantics_key: semantics_version,
+        }
+
+    return transform
+
+
 def _export_learning_data_transform(params: dict[str, Any]) -> dict[str, Any]:
     """EXPORT_LEARNING_DATA's execution identity must be content-addressed,
     not caller-order-addressed (SceneOps V2 Request 2.5 §12): strip each
@@ -73,6 +99,14 @@ def _export_learning_data_transform(params: dict[str, Any]) -> dict[str, Any]:
     same set of aligned revisions in a different order still dedup to one
     execution. ``tables`` is also sorted for the same order-independence
     reason, when present.
+
+    Also injects the schema version of the tables the Job writes, which is what
+    ``learning_data_export_id`` already keys on: without it a Job that succeeded
+    under an earlier schema would be returned, and its result names an export
+    today's readers refuse. The aligned artifact schema is deliberately not
+    injected. Inputs are pinned by content, and a finished export does not need
+    its inputs to stay readable: it is complete and current as long as its own
+    schema is, so a later aligned schema alone must not repeat it.
     """
 
     inputs = params.get("inputs")
@@ -92,6 +126,7 @@ def _export_learning_data_transform(params: dict[str, Any]) -> dict[str, Any]:
     tables = params.get("tables")
     if isinstance(tables, list):
         transformed["tables"] = sorted(tables)
+    transformed["learning_data_schema_version"] = LEARNING_DATA_SCHEMA_VERSION
     return transformed
 
 
@@ -154,8 +189,14 @@ _EXECUTION_KEY_PARAM_TRANSFORMS: dict[
     JobType, Callable[[dict[str, Any]], dict[str, Any]]
 ] = {
     JobType.ALIGN_EPISODE: _align_episode_transform,
-    JobType.VALIDATE_ALIGNED_EPISODE: _exclude_keys("aligned_artifact_id"),
-    JobType.PROFILE_ALIGNED_EPISODE: _exclude_keys("aligned_artifact_id"),
+    JobType.VALIDATE_ALIGNED_EPISODE: _aligned_analysis_transform(
+        semantics_key="validation_semantics_version",
+        semantics_version=ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION,
+    ),
+    JobType.PROFILE_ALIGNED_EPISODE: _aligned_analysis_transform(
+        semantics_key="profile_semantics_version",
+        semantics_version=ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION,
+    ),
     JobType.EXPORT_LEARNING_DATA: _export_learning_data_transform,
     JobType.CURATE_EPISODES: _curate_episodes_transform,
 }

@@ -103,10 +103,13 @@ class TestUnrelatedJobTypesUnaffected:
             {"episode_id": "ep-2", "aligned_artifact_checksum": "b" * 64},
         ]
 
-    def test_validate_aligned_episode_transform_unchanged(self) -> None:
+    def test_validate_aligned_episode_is_not_keyed_on_curation_inputs(self) -> None:
         params = {"episode_id": "ep-1", "aligned_artifact_id": "art-1"}
         transformed = params_for_execution_key(JobType.VALIDATE_ALIGNED_EPISODE, params)
-        assert transformed == {"episode_id": "ep-1"}
+        assert "aligned_artifact_id" not in transformed
+        assert transformed["episode_id"] == "ep-1"
+        # Its own contract versions: see test_contract_aware_execution_identity.py.
+        assert "profile_semantics_version" not in transformed
 
     def test_no_op_job_type_unaffected(self) -> None:
         params = {"episode_id": "ep-1"}

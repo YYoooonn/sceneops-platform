@@ -19,7 +19,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import io
+
+import polars as pl
+import pyarrow.parquet as pq
+
 from sceneops_analytics import AnalyticsTableWriter, SceneOpsDataset
+from sceneops_analytics.testing.learning_migration import (
+    temporal_entries,
+    write_v1_export,
+)
 from sceneops_core.artifacts.schemas import (
     ArtifactKind,
     ArtifactOwnerType,
@@ -31,8 +40,12 @@ from sceneops_core.episodes.alignment import (
     TemporalAlignmentConfig,
     TemporalSourceContext,
     align_episode,
+    load_aligned_episode_artifact,
 )
-from sceneops_core.episodes.learning_export import LearningDataExportManifest
+from sceneops_core.episodes.learning_export import (
+    IncrementalExportUnsupportedBaseError,
+    LearningDataExportManifest,
+)
 from sceneops_core.episodes.testing import (
     DEFAULT_CLOCK,
     action,
@@ -413,3 +426,165 @@ async def test_full_build_and_incremental_export_expose_identical_logical_data(
             full_step = await full_dataset.get_step(ref, step_index)
             incremental_step = await incremental_dataset.get_step(ref, step_index)
             assert full_step == incremental_step
+
+
+async def _objects(fixture: _Fixture) -> dict[str, bytes]:
+    store = fixture.writer.artifact_store
+    return {
+        item.uri: await store.read_bytes(item.uri)
+        for item in await store.list_objects(fixture.writer.root_uri)
+    }
+
+
+async def _base_export(fixture: _Fixture) -> tuple[str, LearningDataExportManifest]:
+    fixture.add_episode("ep-0", artifact_id="art-0")
+    result = await ExportLearningDataJobHandler().run(
+        fixture.make_request(
+            fixture.make_context(), inputs=[_input_for("ep-0", "art-0")]
+        )
+    )
+    data = await fixture.writer.read_learning_export_manifest_bytes(
+        fixture.writer.learning_export_manifest_uri(
+            dataset_id="d1", dataset_version="v1", export_id=result.export_id
+        )
+    )
+    return result.export_id, LearningDataExportManifest.model_validate_json(data)
+
+
+async def _assert_base_refused(fixture: _Fixture, base_export_id: str, match: str):
+    fixture.add_episode("ep-new", artifact_id="art-new")
+    objects = await _objects(fixture)
+    context = fixture.make_context()
+    with pytest.raises(IncrementalExportUnsupportedBaseError, match=match):
+        await ExportLearningDataJobHandler().run(
+            fixture.make_request(
+                context,
+                inputs=[_input_for("ep-new", "art-new")],
+                base_export_id=base_export_id,
+            )
+        )
+    # Refused before anything was read for the delta, written or registered.
+    context.artifact_record_store.get.assert_not_awaited()
+    context.artifact_record_store.register.assert_not_awaited()
+    context.commit.assert_not_awaited()
+    assert await _objects(fixture) == objects
+
+
+@pytest.mark.asyncio
+async def test_a_v1_base_is_refused_before_any_shard_is_reused(
+    fixture: _Fixture,
+) -> None:
+    """Its steps and signals have the columns of today's, so nothing would fail
+    later: its rows would be carried into an export declaring today's schema."""
+    entries = list(temporal_entries().values())
+    _, data = await write_v1_export(
+        fixture.writer, dataset_id="d1", dataset_version="v1", entries=entries
+    )
+    await _assert_base_refused(fixture, json.loads(data)["exportId"], "'v1'")
+
+
+@pytest.mark.parametrize("version", [None, "v999", 2])
+@pytest.mark.asyncio
+async def test_a_base_of_a_missing_or_unknown_version_is_refused(
+    fixture: _Fixture, version
+) -> None:
+    export_id, manifest = await _base_export(fixture)
+    document = manifest.to_artifact_dict()
+    if version is None:
+        del document["schemaVersion"]
+    else:
+        document["schemaVersion"] = version
+    await fixture.writer.artifact_store.write_bytes(
+        fixture.writer.learning_export_manifest_uri(
+            dataset_id="d1", dataset_version="v1", export_id=export_id
+        ),
+        json.dumps(document).encode(),
+    )
+    await _assert_base_refused(fixture, export_id, "not supported")
+
+
+@pytest.mark.asyncio
+async def test_a_base_whose_manifest_lies_about_a_shard_is_refused(
+    fixture: _Fixture,
+) -> None:
+    """The manifest says today's schema and a shard's footer does not."""
+    export_id, manifest = await _base_export(fixture)
+    shard = manifest.shard_index.learning_signals[0]
+    store = fixture.writer.artifact_store
+    table = pq.read_table(io.BytesIO(await store.read_bytes(shard.uri)))
+    sink = io.BytesIO()
+    pq.write_table(table.replace_schema_metadata(None), sink)
+    await store.write_bytes(shard.uri, sink.getvalue())
+    document = manifest.to_artifact_dict()
+    document["shardIndex"]["learningSignals"][0]["sizeBytes"] = len(sink.getvalue())
+    await store.write_bytes(
+        fixture.writer.learning_export_manifest_uri(
+            dataset_id="d1", dataset_version="v1", export_id=export_id
+        ),
+        json.dumps(document).encode(),
+    )
+    await _assert_base_refused(fixture, export_id, "footer states")
+
+
+@pytest.mark.asyncio
+async def test_a_base_whose_learning_episodes_footer_is_stale_is_refused(
+    fixture: _Fixture,
+) -> None:
+    export_id, manifest = await _base_export(fixture)
+    uri = manifest.table_uris["learning_episodes"]
+    store = fixture.writer.artifact_store
+    buffer = io.BytesIO()
+    pl.read_parquet(io.BytesIO(await store.read_bytes(uri))).write_parquet(buffer)
+    await store.write_bytes(uri, buffer.getvalue())
+    await _assert_base_refused(fixture, export_id, "footer states")
+
+
+@pytest.mark.asyncio
+async def test_a_base_shard_that_cannot_be_read_is_refused(fixture: _Fixture) -> None:
+    export_id, manifest = await _base_export(fixture)
+    await fixture.writer.artifact_store.write_bytes(
+        manifest.shard_index.learning_steps[0].uri, b"x" * 8
+    )
+    document = manifest.to_artifact_dict()
+    document["shardIndex"]["learningSteps"][0]["sizeBytes"] = 8
+    await fixture.writer.artifact_store.write_bytes(
+        fixture.writer.learning_export_manifest_uri(
+            dataset_id="d1", dataset_version="v1", export_id=export_id
+        ),
+        json.dumps(document).encode(),
+    )
+    await _assert_base_refused(fixture, export_id, "cannot be an incremental base")
+
+
+@pytest.mark.asyncio
+async def test_an_incremental_export_reads_back_with_every_episodes_instance(
+    fixture: _Fixture,
+) -> None:
+    export_id, _ = await _base_export(fixture)
+    fixture.add_episode("ep-1", artifact_id="art-1")
+    context = fixture.make_context()
+    result = await ExportLearningDataJobHandler().run(
+        fixture.make_request(
+            context, inputs=[_input_for("ep-1", "art-1")], base_export_id=export_id
+        )
+    )
+    assert result.reused_shard_counts == {"learning_steps": 1, "learning_signals": 1}
+
+    data = await fixture.writer.read_learning_export_manifest_bytes(result.manifest_uri)
+    manifest = LearningDataExportManifest.model_validate_json(data)
+    assert manifest.schema_version == "v2"
+    dataset = await SceneOpsDataset.open(
+        learning_manifest=manifest,
+        learning_manifest_checksum=_checksum(data),
+        artifact_store=fixture.writer.artifact_store,
+    )
+    assert len(dataset) == 2
+    for ref in dataset.episodes():
+        metadata = dataset.get_episode(ref)
+        assert (
+            metadata.clock_instance
+            == load_aligned_episode_artifact(
+                fixture.bytes_by_uri[f"mem://episodes/{ref.episode_id}/aligned/x.json"]
+            ).aligned_episode.clock_instance
+        )
+        await dataset.get_step(ref, 0)

@@ -2,8 +2,11 @@
 
 ## Status
 
-**Accepted (2026-11-01, Canonical Domain Boundaries P5.1).** AlignedEpisode only. The
-learning and Scene analytics tables still discard the context; see
+**Accepted (2026-11-01, Canonical Domain Boundaries P5.1).** AlignedEpisode only.
+**Amended by [ADR-019](./019-learning-data-schema-v2-and-contract-aware-jobs.md)
+(2026-11-02)**, which carries the context into the learning tables and adds the contract to
+the VALIDATE, PROFILE and EXPORT Job identities. This record keeps what was decided and known
+on its date. Scene analytics tables still discard the context; see
 [Consequences](#consequences).
 
 ## Context
@@ -122,13 +125,15 @@ but they do not show that today's readers accept it; use the pins of a forced ru
 
 Open until the follow-up slices:
 
-- **P5.2A:** the learning tables still keep only `source_clock`. The context stops at
-  AlignedEpisode, so a Parquet consumer cannot decide comparability from a learning export.
+- **P5.2A (closed by ADR-019):** the learning tables still keep only `source_clock`. The
+  context stops at AlignedEpisode, so a Parquet consumer cannot decide comparability from a
+  learning export.
 - **P5.2B:** Scene analytics tables are unchanged and carry only clock ids.
 - **P5.3:** no check yet ties an artifact's scope to the Episode's canonical manifest, and
   no static rule yet forbids reading scope elements.
 - An incremental learning export reuses its base's shards without reading their aligned
   artifacts, so a base built from v1 artifacts carries forward. Its rows are unchanged by
-  this decision; curation of such an export refuses the v1 revisions it pins.
+  this decision; curation of such an export refuses the v1 revisions it pins. (ADR-019: a base
+  of another learning schema is refused before reuse.)
 - `ALIGNMENT_SEMANTICS_VERSION` is still not an input of the ALIGN_EPISODE execution key.
   A future semantics bump needs the same treatment as this schema bump.

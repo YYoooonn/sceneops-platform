@@ -7,6 +7,7 @@ import pytest
 
 from sceneops_core.episodes.learning import EpisodeRef
 from sceneops_core.episodes.learning_export import (
+    LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
     IncrementalExportOverlapError,
     IncrementalExportUnsupportedBaseError,
@@ -55,6 +56,7 @@ def _base_manifest(
     *, shard_index: LearningDataShardIndex | None, inputs: list[AlignedArtifactRevision]
 ) -> LearningDataExportManifest:
     return LearningDataExportManifest(
+        schema_version=LEARNING_DATA_SCHEMA_VERSION,
         export_id="base1",
         dataset_id="d1",
         dataset_version="v1",

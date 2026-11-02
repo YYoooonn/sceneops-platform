@@ -10,6 +10,7 @@ from .schemas import (
     AlignedArtifactRevision,
     LearningDataExportConfig,
     LearningDataExportManifest,
+    UnsupportedLearningDataSchemaError,
 )
 from .sharding import (
     LEARNING_DATA_LAYOUT_VERSION_SHARDED,
@@ -36,6 +37,7 @@ __all__ = [
     "IncrementalExportUnsupportedBaseError",
     "ShardEpisodeMember",
     "ShardPolicy",
+    "UnsupportedLearningDataSchemaError",
     "default_shard_policy",
     "learning_data_export_id",
     "plan_episode_shards",

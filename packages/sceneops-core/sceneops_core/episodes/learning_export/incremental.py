@@ -38,15 +38,20 @@ from dataclasses import dataclass
 
 from sceneops_core.episodes.learning import EpisodeRef
 
-from .schemas import AlignedArtifactRevision, LearningDataExportManifest
+from .schemas import (
+    LEARNING_DATA_SCHEMA_VERSION,
+    AlignedArtifactRevision,
+    LearningDataExportManifest,
+)
 from .sharding import LearningDataShard
 
 
 class IncrementalExportUnsupportedBaseError(Exception):
-    """The base export cannot be used as an incremental base -- either it
-    has no ``shard_index`` (a v1/legacy single-file export -- nothing
-    physical to reuse), or the target revision set does not fully contain
-    the base's exposed set (this module supports additive delta only)."""
+    """The base export cannot be used as an incremental base: it is of another
+    learning data schema (its rows would be carried into an export declaring
+    this one), it has no ``shard_index`` (a single-file export -- nothing
+    physical to reuse), or the target revision set does not fully contain the
+    base's exposed set (this module supports additive delta only)."""
 
 
 class IncrementalExportOverlapError(Exception):
@@ -114,11 +119,24 @@ def plan_incremental_export(
     (``sceneops_analytics.incremental_export``), which reuses the
     existing, unmodified ``plan_episode_shards``/``plan_shards_for_entries``
     for that step.
+
+    A parsed manifest has already stated the supported version; this check is
+    what the shard reuse itself relies on, so a manifest that reached here some
+    other way cannot carry shards of another schema into a new export. Whether
+    the shard files agree with their manifest takes reading their footers:
+    ``sceneops_analytics.check_learning_export_tables``.
     """
+    if base_manifest.schema_version != LEARNING_DATA_SCHEMA_VERSION:
+        raise IncrementalExportUnsupportedBaseError(
+            f"base export {base_manifest.export_id!r} is of learning data schema "
+            f"{base_manifest.schema_version!r}, and an export of "
+            f"{LEARNING_DATA_SCHEMA_VERSION!r} cannot reuse its shards; use a "
+            "full export instead"
+        )
     if base_manifest.shard_index is None:
         raise IncrementalExportUnsupportedBaseError(
             f"base export {base_manifest.export_id!r} has no shard_index "
-            "(v1 single-file layout) -- nothing physical to reuse; use a "
+            "(single-file layout) -- nothing physical to reuse; use a "
             "full export instead"
         )
 

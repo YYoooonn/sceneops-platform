@@ -8,7 +8,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from sceneops_analytics import AnalyticsTableWriter
+from sceneops_analytics import LEARNING_EPISODES_SCHEMA, AnalyticsTableWriter
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_storage import LocalArtifactStore, WriteOnceConflictError
 
@@ -78,18 +78,24 @@ async def test_a_robot_run_table_is_a_content_named_revision_too(writer):
 
 
 async def test_an_export_id_never_names_two_different_tables(writer, store):
+    def table(*episode_ids: str) -> pl.DataFrame:
+        return pl.DataFrame(
+            [{"episode_id": episode_id} for episode_id in episode_ids],
+            schema=LEARNING_EPISODES_SCHEMA,
+        )
+
     kwargs = dict(dataset_id="d", dataset_version="v", export_id="e" * 64)
     first = await writer.write_learning_table(
-        "learning_episodes", pl.DataFrame({"x": [1]}), **kwargs
+        "learning_episodes", table("ep-1"), **kwargs
     )
     again = await writer.write_learning_table(
-        "learning_episodes", pl.DataFrame({"x": [1]}), **kwargs
+        "learning_episodes", table("ep-1"), **kwargs
     )
     assert again.checksum == first.checksum
 
     with pytest.raises(WriteOnceConflictError):
         await writer.write_learning_table(
-            "learning_episodes", pl.DataFrame({"x": [1, 2]}), **kwargs
+            "learning_episodes", table("ep-1", "ep-2"), **kwargs
         )
     assert sha256_checksum(await store.read_bytes(first.uri)) == first.checksum
 

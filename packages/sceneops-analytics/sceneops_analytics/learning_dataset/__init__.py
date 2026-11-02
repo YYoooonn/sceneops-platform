@@ -1,5 +1,5 @@
 from .cache_policy import DEFAULT_CACHE_POLICY, DISABLED_CACHE_POLICY, CachePolicy
-from .dataset import SceneOpsDataset
+from .dataset import SceneOpsDataset, check_learning_export_tables
 from .errors import (
     CurationManifestMismatchError,
     DatasetManifestMismatchError,
@@ -17,6 +17,7 @@ from .numpy_adapter import (
     materialize_sequences,
     to_numpy,
 )
+from .parquet_range_reader import ShardMetadataError
 from .sampler import SequenceSampler
 from .schemas import EpisodeMetadata
 
@@ -43,7 +44,9 @@ __all__ = [
     "SceneOpsDatasetError",
     "SequenceSampler",
     "ShardIndexMismatchError",
+    "ShardMetadataError",
     "StepOutOfRangeError",
+    "check_learning_export_tables",
     "materialize_sequences",
     "to_numpy",
 ]

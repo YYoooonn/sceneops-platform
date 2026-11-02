@@ -36,7 +36,10 @@ class LearningDataIntegrityError(SceneOpsDatasetError):
     """The learning-data snapshot's declared inputs (LearningDataExportManifest.inputs)
     and its actual learning_episodes.parquet rows disagree -- e.g. a
     declared/selected (episode_id, aligned_artifact_checksum) has no
-    corresponding row in the table, or vice versa."""
+    corresponding row in the table, or vice versa. Also: a row of
+    learning_episodes states no valid clock instance, one Episode identity is
+    stated with two instances, or a step or signal row does not belong to the
+    Episode it was read for -- its temporal context would be a guess."""
 
 
 class EpisodeNotFoundError(SceneOpsDatasetError):

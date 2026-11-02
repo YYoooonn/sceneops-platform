@@ -54,6 +54,7 @@ from sceneops_core.episodes.alignment import (
 from sceneops_core.episodes.alignment.schemas import AlignedEpisode, LearningStep
 from sceneops_core.episodes.learning import EpisodeRef, FeatureProjection
 from sceneops_core.episodes.learning_export import (
+    LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
     LearningDataExportConfig,
     LearningDataExportManifest,
@@ -185,6 +186,7 @@ async def _write_snapshot(
         row_counts[name] = df.height
 
     manifest = LearningDataExportManifest(
+        schema_version=LEARNING_DATA_SCHEMA_VERSION,
         export_id=export_id,
         dataset_id=DATASET_ID,
         dataset_version=DATASET_VERSION,

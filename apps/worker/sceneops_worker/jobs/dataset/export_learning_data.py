@@ -17,7 +17,9 @@ import polars as pl
 
 from sceneops_analytics import (
     LEARNING_TABLE_BUILDERS,
+    ShardMetadataError,
     build_learning_episodes_table,
+    check_learning_export_tables,
     write_incremental_sharded_learning_tables,
     write_sharded_learning_tables,
 )
@@ -36,9 +38,11 @@ from sceneops_core.episodes.learning_export import (
     LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
     IncrementalExportPlan,
+    IncrementalExportUnsupportedBaseError,
     LearningDataExportConfig,
     LearningDataExportManifest,
     LearningDataShardIndex,
+    UnsupportedLearningDataSchemaError,
     default_shard_policy,
     learning_data_export_id,
     plan_incremental_export,
@@ -81,6 +85,10 @@ async def _resolve_base_export_manifest(
     dataset_version: str,
     base_export_id: str,
 ) -> LearningDataExportManifest:
+    """The base's manifest, once it and every table it names have been shown to
+    be of this schema. Runs before anything is read for the delta or written, so
+    a refused base leaves no output, and its shards are never concatenated with
+    the new ones just to find out."""
     uri = context.analytics_writer.learning_export_manifest_uri(
         dataset_id=dataset_id,
         dataset_version=dataset_version,
@@ -92,7 +100,18 @@ async def _resolve_base_export_manifest(
             f"base_export_id {base_export_id!r} has no manifest at {uri!r} "
             f"(dataset_id={dataset_id!r}, dataset_version={dataset_version!r})"
         )
-    return LearningDataExportManifest.model_validate_json(raw_bytes)
+    try:
+        manifest = LearningDataExportManifest.model_validate_json(raw_bytes)
+        await check_learning_export_tables(
+            context.analytics_writer.artifact_store, manifest
+        )
+    except (UnsupportedLearningDataSchemaError, ShardMetadataError) as exc:
+        raise IncrementalExportUnsupportedBaseError(
+            f"base export {base_export_id!r} cannot be an incremental base for "
+            f"learning data schema {LEARNING_DATA_SCHEMA_VERSION!r}: {exc}; use a "
+            "full export instead"
+        ) from exc
+    return manifest
 
 
 class ExportLearningDataJobHandler(
@@ -245,7 +264,7 @@ class ExportLearningDataJobHandler(
                 # §3) -- SceneOpsDataset never reads these columns, so
                 # rewriting them would only add risk for no benefit.
                 base_df = await context.analytics_writer.read_learning_table(
-                    base_episodes_uri
+                    "learning_episodes", base_episodes_uri
                 )
                 df = pl.concat([base_df, delta_df], how="vertical")
             else:

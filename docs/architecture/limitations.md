@@ -214,22 +214,21 @@ native reader or content builder, and no format has both. Current builder bounds
 - LeRobot is the only external export format; no integration-run record is
   persisted ([Dataset interoperability](./dataset-interoperability.md) §10,
   [External integration runtime](./external-integration-runtime.md) §4).
-- An aligned artifact states its clock instance
-  ([ADR-018](../adr/018-aligned-episode-temporal-context.md)); the learning tables and
-  the Scene analytics tables keep clock ids only, so comparability cannot be decided from
-  those tables. Nothing yet checks that an artifact's clock scope belongs to the Episode
-  it names, or statically forbids reading scope elements.
-- An aligned artifact of schema `v1` is refused by every reader. A PipelineRun's key does
-  not see the output schema, so an unforced request identical to one that succeeded before
-  the schema changed returns that old run, whose artifacts are then refused at their next
-  read; `force: true` produces a current run
-  ([Jobs and pipelines](./jobs-and-pipelines.md)). An unforced VALIDATE, PROFILE or EXPORT
-  request identical to one that succeeded before the change returns that old Job without
-  reading the artifact, so its success does not show that current readers accept it. An
-  incremental learning export reuses
-  its base's shards without reading their aligned artifacts, and curation of an export
-  pinning `v1` artifacts is refused. `ALIGNMENT_SEMANTICS_VERSION` is not an input of the
-  ALIGN_EPISODE execution key.
+- Aligned artifacts and the `learning_episodes` table state their clock instance
+  ([ADR-018](../adr/018-aligned-episode-temporal-context.md),
+  [ADR-019](../adr/019-learning-data-schema-v2-and-contract-aware-jobs.md)). Learning steps and
+  signals reach it only through `SceneOpsDataset`, so a shard read alone has no temporal
+  interpretation. The Scene analytics tables keep clock ids only, so comparability cannot be
+  decided from them. Nothing yet checks that a stated clock scope belongs to the Episode stating
+  it, or statically forbids reading scope elements.
+- An aligned artifact of schema `v1` and a learning export of schema `v1` are refused by every
+  reader, and stay in place. A v1 export is never an incremental base. A PipelineRun's key does
+  not see output schemas, so an unforced request identical to one that succeeded before a schema
+  changed returns that old run, whose outputs are then refused at their next read; `force: true`
+  produces a current run ([Jobs and pipelines](./jobs-and-pipelines.md)). VALIDATE, PROFILE and
+  EXPORT Jobs do see their contracts, so they are not affected. A CURATE_EPISODES Job over a v1
+  export can be returned unforced; the curation it names is refused when opened.
+  `ALIGNMENT_SEMANTICS_VERSION` is not an input of the ALIGN_EPISODE execution key.
 - Alignment refuses an Episode with a `transition` stream
   (`UnsupportedEpisodeContentError`), so a LeRobot Episode built with a `next.*`
   feature is not aligned or exported. Without one, alignment carries its video frames

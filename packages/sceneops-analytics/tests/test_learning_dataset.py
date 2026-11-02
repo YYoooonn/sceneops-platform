@@ -63,6 +63,7 @@ from sceneops_core.episodes.learning import (
     SequenceBoundaryError,
 )
 from sceneops_core.episodes.learning_export import (
+    LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
     LearningDataExportConfig,
     LearningDataExportManifest,
@@ -304,6 +305,7 @@ async def _write_snapshot(
         row_counts[name] = df.height
 
     manifest = LearningDataExportManifest(
+        schema_version=LEARNING_DATA_SCHEMA_VERSION,
         export_id=export_id,
         dataset_id=DATASET_ID,
         dataset_version=DATASET_VERSION,
@@ -887,6 +889,7 @@ class TestLazyQueryBehavior:
             table_uris[name] = result.uri
 
         manifest = LearningDataExportManifest(
+            schema_version=LEARNING_DATA_SCHEMA_VERSION,
             export_id=export_id,
             dataset_id=DATASET_ID,
             dataset_version=DATASET_VERSION,

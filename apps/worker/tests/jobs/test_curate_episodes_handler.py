@@ -34,7 +34,12 @@ from sceneops_core.episodes.alignment import (
     align_episode,
 )
 from sceneops_core.episodes.curation import CurationPolicy
+from sceneops_worker.jobs.dataset._learning_export_resolution import (
+    resolve_and_verify_learning_export_manifest,
+)
 from sceneops_core.episodes.learning_export import (
+    LEARNING_DATA_SCHEMA_VERSION,
+    UnsupportedLearningDataSchemaError,
     AlignedArtifactRevision,
     LearningDataExportManifest,
 )
@@ -108,6 +113,7 @@ def _aligned_record(
 
 def _export_manifest_bytes(inputs: list[AlignedArtifactRevision]) -> bytes:
     manifest = LearningDataExportManifest(
+        schema_version=LEARNING_DATA_SCHEMA_VERSION,
         export_id="export-1",
         dataset_id="d1",
         dataset_version="v1",
@@ -400,6 +406,29 @@ class TestStructurallyInvalidCandidateIsRejectedNotFatal:
         assert rejected.episode_id == "ep-2"
         assert rejected.reasons[0].code.value == "structurally_invalid"
         context.commit.assert_awaited_once()
+
+
+class TestUnsupportedExportSchema:
+    @pytest.mark.parametrize("version", ["v1", "v999"])
+    @pytest.mark.asyncio
+    async def test_an_export_of_another_schema_is_refused_with_no_writes(
+        self, version
+    ) -> None:
+        document = json.loads(_export_manifest_bytes([]))
+        document["schemaVersion"] = version
+        data = json.dumps(document).encode()
+        context = _make_context(
+            records_by_artifact_id={
+                "m-1": _export_manifest_record(
+                    artifact_id="m-1", checksum=_checksum(data), uri="mem://export.json"
+                )
+            },
+            bytes_by_uri={"mem://export.json": data},
+        )
+        with pytest.raises(UnsupportedLearningDataSchemaError, match=version):
+            await resolve_and_verify_learning_export_manifest(
+                context, manifest_artifact_id="m-1", expected_checksum=None
+            )
 
 
 class TestChecksumRaceProtection:

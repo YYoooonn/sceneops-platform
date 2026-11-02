@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 """Verification of one LearningDataExportManifest (v2-sharded): the manifest
 bytes match the pinned checksum, every shard matches its recorded checksum and
-row count, and the export reopens through SceneOpsDataset with real reads.
+row count, every table's footer states the supported schema, and the export
+reopens through SceneOpsDataset with real reads, each sampled Episode restoring
+its clock instance.
 
 Runs inside the worker image (``make e2e-episode-learning`` invokes it through
 ``docker compose run worker-cli``), so it reads the ArtifactStore with the
@@ -215,7 +217,13 @@ async def _run(args: argparse.Namespace) -> int:
 
     dataset_summary: dict | None = None
     if args.open_dataset:
-        from sceneops_analytics.learning_dataset import SceneOpsDataset
+        from sceneops_analytics.learning_dataset import (
+            SceneOpsDataset,
+            check_learning_export_tables,
+        )
+
+        await check_learning_export_tables(store, manifest)
+        checks.append("table_footers_state_supported_schema")
 
         dataset = await SceneOpsDataset.open(
             learning_manifest=manifest,
@@ -276,6 +284,11 @@ async def _run(args: argparse.Namespace) -> int:
                     "position": pos,
                     "episode_id": ref.episode_id,
                     "step_count": metadata.step_count,
+                    "clock_instance": {
+                        "clock": metadata.clock_instance.clock,
+                        "origin": metadata.clock_instance.origin.value,
+                        "scope": list(metadata.clock_instance.scope),
+                    },
                     "sampled_steps": len(window.timestamps_us),
                     "projection": {
                         "observation_channels": list(projection.observation_channels),

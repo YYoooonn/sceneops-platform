@@ -96,7 +96,10 @@ SceneOpsDataset
   The only object anything downstream (SequenceSampler, external
   adapters, ad hoc consumers) ever talks to. Dispatches once, at open(),
   on manifest.shard_index's presence (v2-sharded vs v1-single-file, §11)
-  -- never re-checked per call. Every access-strategy/cache decision in
+  -- never re-checked per call. Layout tags are unrelated to the learning
+  data schema version, which open() refuses unless supported, and which a
+  shard's footer must state before its first row is handed out (ADR-019).
+  Every access-strategy/cache decision in
   this document (§5, §6) is internal to this boundary; nothing above it
   changes based on physical layout, incremental-vs-full export history,
   or shard fragmentation.
@@ -200,6 +203,14 @@ incremental is not a replacement for full export:
     delta), since it is metadata-scale and merge-by-concatenation is
     simpler and more auditable than in-place patching. Reused rows keep
     their *original* provenance columns unchanged (§8).
+  - **A base must be of the current learning data schema.** Its manifest,
+    and the footer of `learning_episodes` and of every shard (one ranged
+    read each, `check_learning_export_tables`), are checked before the delta
+    is read or anything is written; otherwise
+    `IncrementalExportUnsupportedBaseError`, with no output. Shard reuse is
+    never how an incompatibility is discovered: steps and signals can have
+    the same columns under two versions
+    ([ADR-019](../adr/019-learning-data-schema-v2-and-contract-aware-jobs.md)).
   - Planning (`plan_incremental_export`, pure, no I/O) and execution
     (`write_incremental_sharded_learning_tables`) are separate — the
     planner never accesses the DB or ArtifactStore, and is fully

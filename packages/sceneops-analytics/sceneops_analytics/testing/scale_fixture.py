@@ -62,6 +62,7 @@ from sceneops_core.episodes.alignment.schemas import AlignedEpisode, LearningSte
 from sceneops_core.episodes.learning import EpisodeRef, FeatureProjection
 from sceneops_core.episodes.learning_export import (
     LEARNING_DATA_LAYOUT_VERSION_SHARDED,
+    LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
     LearningDataExportConfig,
     LearningDataExportManifest,
@@ -640,6 +641,7 @@ async def write_scaled_dataset_artifacts(
     }
 
     learning_manifest = LearningDataExportManifest(
+        schema_version=LEARNING_DATA_SCHEMA_VERSION,
         export_id=export_id,
         dataset_id=dataset_id,
         dataset_version=dataset_version,

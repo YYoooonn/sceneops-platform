@@ -246,7 +246,10 @@ still used by the frozen golden-fixture/regression path only; see
 `AnalyticsTableWriter.write_learning_table`/`write_learning_table_shard`/
 `write_learning_export_manifest`/`write_curation_manifest` — see
 [Robot learning data layer](./robot-learning-data.md) and
-[Scalable learning data](./scalable-learning-data.md).
+[Scalable learning data](./scalable-learning-data.md). Every learning table states its schema in
+its Parquet footer (`sceneops.table_schema`,
+[ADR-019](../adr/019-learning-data-schema-v2-and-contract-aware-jobs.md)), and because `export_id`
+hashes the schema version, a new schema writes beside the objects of an old one.
 
 ### Run outputs: reports, evaluation, predictions
 

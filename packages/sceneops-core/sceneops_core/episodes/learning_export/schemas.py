@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from pydantic import Field
+from collections.abc import Mapping
+from typing import Any
+
+from pydantic import Field, model_validator
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 
@@ -11,7 +14,19 @@ from .sharding import LEARNING_DATA_LAYOUT_VERSION_SINGLE_FILE, LearningDataShar
 # -- this is the *columnar table layout's own* version (SceneOps V2 Request
 # 2.5 §6). Bump it when learning_episodes/learning_steps/learning_signals'
 # column set or semantics changes, independent of any upstream version.
-LEARNING_DATA_SCHEMA_VERSION = "v1"
+# v2: learning_episodes states the Episode's whole clock instance (clock_origin,
+# clock_scope), and every table states its schema in its Parquet footer.
+LEARNING_DATA_SCHEMA_VERSION = "v2"
+
+
+class UnsupportedLearningDataSchemaError(Exception):
+    """A persisted learning export, or one of its tables, is not of the schema
+    version this code reads, or does not state one. It is refused rather than
+    read with part of its contract missing; the objects stay as they are.
+
+    Deliberately no ``ValueError``: pydantic would fold it into a generic
+    validation error, and the version is the one thing a caller must be able to
+    tell apart from a malformed document."""
 
 
 class AlignedArtifactRevision(SceneOpsBaseModel):
@@ -38,9 +53,14 @@ class LearningDataExportManifest(SceneOpsBaseModel):
     """Index for one complete columnar snapshot (SceneOps V2 Request 2.5
     §6). Multiple snapshots for the same DatasetVersion coexist -- each
     export gets its own export_id-scoped path, never overwriting another
-    export's tables the way EXPORT_ANALYTICS_SNAPSHOT's Scene tables do."""
+    export's tables the way EXPORT_ANALYTICS_SNAPSHOT's Scene tables do.
 
-    schema_version: str = LEARNING_DATA_SCHEMA_VERSION
+    The stored document must state the supported schema version itself. There
+    is no default: a missing version would otherwise be read as the current
+    one, whichever of the several places that parse a manifest did the parsing.
+    """
+
+    schema_version: str
     export_id: str
 
     dataset_id: str
@@ -80,3 +100,18 @@ class LearningDataExportManifest(SceneOpsBaseModel):
     # own table_uris/shard_index, which are always already complete and
     # self-describing regardless of how this export was produced.
     base_export_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _states_the_supported_schema(cls, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            version = data.get("schemaVersion", data.get("schema_version"))
+        else:
+            version = getattr(data, "schema_version", None)
+        if version != LEARNING_DATA_SCHEMA_VERSION:
+            raise UnsupportedLearningDataSchemaError(
+                f"learning data schema version {version!r} is not supported: this "
+                f"reader requires {LEARNING_DATA_SCHEMA_VERSION!r}; export the "
+                "aligned revisions again to get an export of that schema (ADR-019)"
+            )
+        return data

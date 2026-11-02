@@ -33,6 +33,7 @@ from sceneops_analytics.testing import (
 )
 from sceneops_core.episodes.alignment import AlignedSignalStatus
 from sceneops_core.episodes.learning_export import (
+    LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
     LearningDataExportConfig,
     LearningDataExportManifest,
@@ -122,6 +123,7 @@ async def _open_legacy(tmp_path, spec: ScaleSpec):
         row_counts[name] = df.height
 
     manifest = LearningDataExportManifest(
+        schema_version=LEARNING_DATA_SCHEMA_VERSION,
         export_id=export_id,
         dataset_id=dataset_id,
         dataset_version=dataset_version,

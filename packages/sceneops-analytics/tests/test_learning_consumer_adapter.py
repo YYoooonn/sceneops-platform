@@ -44,6 +44,7 @@ from sceneops_core.episodes.learning import (
     SequenceSample,
 )
 from sceneops_core.episodes.learning_export import (
+    LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
     LearningDataExportConfig,
     LearningDataExportManifest,
@@ -164,6 +165,7 @@ async def _write_snapshot(tmp_path, artifact_store, *, entries):
         table_uris[name] = result.uri
 
     manifest = LearningDataExportManifest(
+        schema_version=LEARNING_DATA_SCHEMA_VERSION,
         export_id=export_id,
         dataset_id=DATASET_ID,
         dataset_version=DATASET_VERSION,

@@ -18,7 +18,6 @@ functions unchanged.
 
 from __future__ import annotations
 
-import io
 from collections.abc import Sequence
 
 import polars as pl
@@ -42,12 +41,20 @@ from sceneops_core.episodes.learning import (
     resolve_feature_schema as _pure_resolve_feature_schema,
 )
 from sceneops_core.episodes.learning_export import (
+    LEARNING_DATA_SCHEMA_VERSION,
     LearningDataExportManifest,
     LearningDataShard,
     ShardEpisodeMember,
+    UnsupportedLearningDataSchemaError,
+)
+from sceneops_core.temporal import (
+    ClockDomainError,
+    ClockInstance,
+    restore_clock_instance,
 )
 from sceneops_storage import ArtifactStore
 
+from ..learning_tables import check_learning_table_footer, read_learning_table_bytes
 from .cache_policy import DEFAULT_CACHE_POLICY, CachePolicy
 from .errors import (
     CurationManifestMismatchError,
@@ -59,7 +66,11 @@ from .errors import (
     StepOutOfRangeError,
 )
 from .lru_cache import BoundedCache
-from .parquet_range_reader import read_episode_row_group, read_shard_row_groups_bulk
+from .parquet_range_reader import (
+    read_episode_row_group,
+    read_shard_footer,
+    read_shard_row_groups_bulk,
+)
 from .reconstruct import step_from_rows
 from .schemas import EpisodeMetadata
 
@@ -74,9 +85,44 @@ def _strip_sha_prefix(checksum: str) -> str:
     return checksum.removeprefix("sha256:")
 
 
-async def _read_parquet_table(artifact_store: ArtifactStore, uri: str) -> pl.DataFrame:
+async def _read_learning_table(
+    artifact_store: ArtifactStore, uri: str, table_name: str
+) -> pl.DataFrame:
     data = await artifact_store.read_bytes(uri)
-    return pl.read_parquet(io.BytesIO(data))
+    return read_learning_table_bytes(data, table_name, uri=uri)
+
+
+def _check_supported_schema(learning_manifest: LearningDataExportManifest) -> None:
+    """A parsed manifest has stated the supported version already. This is the
+    check the dataset itself relies on: no table of a manifest is read past it,
+    whichever way the object in hand was made."""
+    if learning_manifest.schema_version != LEARNING_DATA_SCHEMA_VERSION:
+        raise UnsupportedLearningDataSchemaError(
+            f"learning export {learning_manifest.export_id!r} is of learning data "
+            f"schema {learning_manifest.schema_version!r}: this reader requires "
+            f"{LEARNING_DATA_SCHEMA_VERSION!r} (ADR-019)"
+        )
+
+
+async def check_learning_export_tables(
+    artifact_store: ArtifactStore, learning_manifest: LearningDataExportManifest
+) -> None:
+    """Refuse an export unless every table it names states its version: each
+    single-file table and, through a ranged read of its footer alone, each shard.
+    ``SceneOpsDataset`` checks a shard when it first reads one; a caller about to
+    reuse shards it will not read needs the answer up front."""
+    _check_supported_schema(learning_manifest)
+    for table_name, uri in learning_manifest.table_uris.items():
+        await _read_learning_table(artifact_store, uri, table_name)
+    shard_index = learning_manifest.shard_index
+    if shard_index is None:
+        return
+    for table_name in _SHARDED_TABLES:
+        for shard in getattr(shard_index, table_name):
+            footer = await read_shard_footer(
+                artifact_store, shard.uri, shard.size_bytes
+            )
+            check_learning_table_footer(footer, table_name, uri=shard.uri)
 
 
 def _table_is_present(
@@ -131,6 +177,97 @@ def _build_shard_lookup(
     return lookup
 
 
+def _episode_metadata_by_ref(rows: list[dict]) -> dict[EpisodeRef, EpisodeMetadata]:
+    """Every row of learning_episodes as validated metadata, exposed or not: the
+    file is one contract, and a row a curation hides today is still what an
+    identical open without that curation would read.
+
+    One EpisodeRef has one row, and one Episode one instance per clock: a unit's
+    source binding asserts its scope, and the Episode's id is derived from the
+    same binding. Anything else leaves a timestamp with no single context."""
+    metadata_by_ref: dict[EpisodeRef, EpisodeMetadata] = {}
+    instances: dict[tuple[str, str], ClockInstance] = {}
+    for row in rows:
+        ref = EpisodeRef(
+            episode_id=row["episode_id"],
+            aligned_artifact_checksum=row["aligned_artifact_checksum"],
+        )
+        if ref in metadata_by_ref:
+            raise LearningDataIntegrityError(
+                f"learning_episodes.parquet has more than one row for {ref!r}"
+            )
+        try:
+            instance = restore_clock_instance(
+                row["source_clock"], row["clock_origin"], row["clock_scope"]
+            )
+        except ClockDomainError as exc:
+            raise LearningDataIntegrityError(
+                f"learning_episodes.parquet row for {ref!r} states no valid clock "
+                f"instance: {exc}"
+            ) from exc
+        known = instances.setdefault((ref.episode_id, instance.clock), instance)
+        if known != instance:
+            raise LearningDataIntegrityError(
+                f"learning_episodes.parquet states episode {ref.episode_id!r} with "
+                f"two instances of clock {instance.clock!r}: {known!r} and "
+                f"{instance!r}"
+            )
+        metadata_by_ref[ref] = EpisodeMetadata(
+            episode_ref=ref,
+            source_start_timestamp_us=row["source_start_timestamp_us"],
+            source_end_timestamp_us=row["source_end_timestamp_us"],
+            source_clock=instance.clock,
+            clock_origin=instance.origin,
+            clock_scope=instance.scope,
+            alignment_semantics_version=row["alignment_semantics_version"],
+            alignment_config_hash=row["alignment_config_hash"],
+            target_frequency_hz=row["target_frequency_hz"],
+            achieved_frequency_hz=row["achieved_frequency_hz"],
+            dt_us=row["dt_us"],
+            step_count=row["step_count"],
+            duplicate_discarded_count=row["duplicate_discarded_count"],
+            task=row["task"],
+            outcome=row["outcome"],
+        )
+    return metadata_by_ref
+
+
+def _check_rows_belong_to(table: pa.Table, ref: EpisodeRef, *, table_name: str) -> None:
+    """The shard index says where an Episode's rows are; the rows say whose they
+    are. Reconstruction attaches them to ``ref``, and with that to its clock
+    instance, so a row group holding anyone else's rows must not get that far."""
+    episode_ids = set(table.column("episode_id").unique().to_pylist())
+    checksums = set(table.column("aligned_artifact_checksum").unique().to_pylist())
+    if not (
+        episode_ids <= {ref.episode_id} and checksums <= {ref.aligned_artifact_checksum}
+    ):
+        raise LearningDataIntegrityError(
+            f"{table_name} row group mapped to {ref!r} holds rows of "
+            f"episode_id={sorted(map(str, episode_ids))}, "
+            f"aligned_artifact_checksum={sorted(map(str, checksums))}"
+        )
+
+
+def _check_rows_are_owned(
+    df: pl.DataFrame, table_name: str, table_refs: frozenset[EpisodeRef]
+) -> None:
+    """Single-file layout: a step or signal row has one owner, an existing row of
+    learning_episodes."""
+    owners = df.select("episode_id", "aligned_artifact_checksum").unique()
+    orphaned = sorted(
+        (episode_id, checksum)
+        for episode_id, checksum in owners.iter_rows()
+        if episode_id is None
+        or checksum is None
+        or EpisodeRef(episode_id=episode_id, aligned_artifact_checksum=checksum)
+        not in table_refs
+    )
+    if orphaned:
+        raise LearningDataIntegrityError(
+            f"{table_name} has rows owned by no row of learning_episodes: {orphaned}"
+        )
+
+
 def _build_steps_from_tables(
     steps_table: pa.Table,
     signals_table: pa.Table,
@@ -143,6 +280,9 @@ def _build_steps_from_tables(
     preload path (``_bulk_load_shard``, SceneOps V2 Request 5.4 §3/§4) --
     one EpisodeRef's steps+signals Arrow tables in, its ordered
     ``list[LearningStep]`` out, identical either way."""
+    _check_rows_belong_to(steps_table, ref, table_name="learning_steps")
+    _check_rows_belong_to(signals_table, ref, table_name="learning_signals")
+
     signals_by_step: dict[int, list[dict]] = {}
     for row in signals_table.to_pylist():
         signals_by_step.setdefault(row["step_index"], []).append(row)
@@ -251,6 +391,7 @@ class SceneOpsDataset:
         learning_manifest: LearningDataExportManifest,
         episode_refs: list[EpisodeRef],
         metadata_by_ref: dict[EpisodeRef, EpisodeMetadata],
+        table_refs: frozenset[EpisodeRef],
         shard_lookup: dict[str, dict[EpisodeRef, ShardLocation]] | None = None,
         cache_policy: CachePolicy | None = None,
     ) -> None:
@@ -258,6 +399,9 @@ class SceneOpsDataset:
         self._learning_manifest = learning_manifest
         self._episode_refs = episode_refs
         self._metadata_by_ref = metadata_by_ref
+        # Every EpisodeRef of learning_episodes, exposed or not: the possible
+        # owners of a step or signal row.
+        self._table_refs = table_refs
         # None (v1, legacy single-file) vs a dict (v2, sharded) -- SceneOps
         # V2 Request 5.3. `_is_sharded` dispatches every step/window read
         # below; v1 never touches shard_lookup/_shard_metadata_cache, v2
@@ -321,7 +465,15 @@ class SceneOpsDataset:
         or a custom ``CachePolicy`` for a different memory/reuse
         trade-off. Purely a performance knob -- never changes what any
         method returns, only what gets re-fetched vs reused.
+
+        Raises ``UnsupportedLearningDataSchemaError`` unless the export and
+        its learning_episodes footer state the supported schema, and
+        ``LearningDataIntegrityError`` unless every row of learning_episodes
+        states one valid clock instance. A shard's footer is checked when the
+        shard is first read, so opening stays free of per-shard reads.
         """
+        _check_supported_schema(learning_manifest)
+
         missing_tables = [
             name
             for name in _REQUIRED_TABLES
@@ -338,17 +490,19 @@ class SceneOpsDataset:
                 curation_manifest, learning_manifest, learning_manifest_checksum
             )
 
-        episodes_df = await _read_parquet_table(
-            artifact_store, learning_manifest.table_uris["learning_episodes"]
+        episodes_df = await _read_learning_table(
+            artifact_store,
+            learning_manifest.table_uris["learning_episodes"],
+            "learning_episodes",
         )
+        all_metadata = _episode_metadata_by_ref(list(episodes_df.iter_rows(named=True)))
 
         declared = {
             (item.episode_id, item.aligned_artifact_checksum)
             for item in learning_manifest.inputs
         }
         present = {
-            (row["episode_id"], row["aligned_artifact_checksum"])
-            for row in episodes_df.iter_rows(named=True)
+            (ref.episode_id, ref.aligned_artifact_checksum) for ref in all_metadata
         }
 
         if curation_manifest is not None:
@@ -388,38 +542,29 @@ class SceneOpsDataset:
             EpisodeRef(episode_id=episode_id, aligned_artifact_checksum=checksum)
             for episode_id, checksum in exposed_keys
         ]
-        exposed_ref_set = set(episode_refs)
+        metadata_by_ref = {ref: all_metadata[ref] for ref in episode_refs}
 
-        metadata_by_ref: dict[EpisodeRef, EpisodeMetadata] = {}
-        for row in episodes_df.iter_rows(named=True):
-            ref = EpisodeRef(
-                episode_id=row["episode_id"],
-                aligned_artifact_checksum=row["aligned_artifact_checksum"],
+        table_refs = frozenset(all_metadata)
+        shard_lookup = _build_shard_lookup(learning_manifest)
+        for table_name, table_lookup in (shard_lookup or {}).items():
+            orphaned = sorted(
+                (ref.episode_id, ref.aligned_artifact_checksum)
+                for ref in table_lookup.keys() - table_refs
             )
-            if ref not in exposed_ref_set:
-                continue
-            metadata_by_ref[ref] = EpisodeMetadata(
-                episode_ref=ref,
-                source_start_timestamp_us=row["source_start_timestamp_us"],
-                source_end_timestamp_us=row["source_end_timestamp_us"],
-                source_clock=row["source_clock"],
-                alignment_semantics_version=row["alignment_semantics_version"],
-                alignment_config_hash=row["alignment_config_hash"],
-                target_frequency_hz=row["target_frequency_hz"],
-                achieved_frequency_hz=row["achieved_frequency_hz"],
-                dt_us=row["dt_us"],
-                step_count=row["step_count"],
-                duplicate_discarded_count=row["duplicate_discarded_count"],
-                task=row["task"],
-                outcome=row["outcome"],
-            )
+            if orphaned:
+                raise ShardIndexMismatchError(
+                    f"{table_name} shards map EpisodeRefs that have no row of "
+                    f"learning_episodes (export_id="
+                    f"{learning_manifest.export_id!r}): {orphaned}"
+                )
 
         return cls(
             artifact_store=artifact_store,
             learning_manifest=learning_manifest,
             episode_refs=episode_refs,
             metadata_by_ref=metadata_by_ref,
-            shard_lookup=_build_shard_lookup(learning_manifest),
+            table_refs=table_refs,
+            shard_lookup=shard_lookup,
             cache_policy=cache_policy,
         )
 
@@ -463,19 +608,25 @@ class SceneOpsDataset:
         manifest (SceneOps V2 Request 5.3 §6); see
         ``_fetch_episode_arrow_table`` for the v2 selective path."""
         if self._steps_df is None:
-            self._steps_df = await _read_parquet_table(
+            steps_df = await _read_learning_table(
                 self._artifact_store,
                 self._learning_manifest.table_uris["learning_steps"],
+                "learning_steps",
             )
+            _check_rows_are_owned(steps_df, "learning_steps", self._table_refs)
+            self._steps_df = steps_df
         return self._steps_df
 
     async def _get_signals_df(self) -> pl.DataFrame:
         """v1 only -- see ``_get_steps_df``."""
         if self._signals_df is None:
-            self._signals_df = await _read_parquet_table(
+            signals_df = await _read_learning_table(
                 self._artifact_store,
                 self._learning_manifest.table_uris["learning_signals"],
+                "learning_signals",
             )
+            _check_rows_are_owned(signals_df, "learning_signals", self._table_refs)
+            self._signals_df = signals_df
         return self._signals_df
 
     # ------------------------------------------------------------------
@@ -514,6 +665,10 @@ class SceneOpsDataset:
             member.row_group_index,
             cached_metadata=cached_metadata,
         )
+        # Before the rows reach anyone, and once per footer: a cached footer has
+        # already been accepted.
+        if cached_metadata is None:
+            check_learning_table_footer(metadata, table_name, uri=shard.uri)
         if cache_key not in self._shard_metadata_cache:
             self._shard_metadata_cache.put(cache_key, metadata)
         return table
@@ -625,23 +780,33 @@ class SceneOpsDataset:
             {signals_lookup[ref][1].row_group_index for ref in remaining}
         )
 
+        steps_cached = self._shard_metadata_cache.get(steps_cache_key)
         steps_tables, steps_metadata = await read_shard_row_groups_bulk(
             self._artifact_store,
             steps_shard.uri,
             steps_shard.size_bytes,
             steps_row_groups,
-            cached_metadata=self._shard_metadata_cache.get(steps_cache_key),
+            cached_metadata=steps_cached,
         )
+        if steps_cached is None:
+            check_learning_table_footer(
+                steps_metadata, "learning_steps", uri=steps_shard.uri
+            )
         if steps_cache_key not in self._shard_metadata_cache:
             self._shard_metadata_cache.put(steps_cache_key, steps_metadata)
 
+        signals_cached = self._shard_metadata_cache.get(signals_cache_key)
         signals_tables, signals_metadata = await read_shard_row_groups_bulk(
             self._artifact_store,
             signals_shard.uri,
             signals_shard.size_bytes,
             signals_row_groups,
-            cached_metadata=self._shard_metadata_cache.get(signals_cache_key),
+            cached_metadata=signals_cached,
         )
+        if signals_cached is None:
+            check_learning_table_footer(
+                signals_metadata, "learning_signals", uri=signals_shard.uri
+            )
         if signals_cache_key not in self._shard_metadata_cache:
             self._shard_metadata_cache.put(signals_cache_key, signals_metadata)
 
@@ -923,4 +1088,4 @@ class SceneOpsDataset:
         )
 
 
-__all__ = ["SceneOpsDataset"]
+__all__ = ["SceneOpsDataset", "check_learning_export_tables"]
