@@ -274,6 +274,14 @@ never make two instances comparable. So two Scenes of one RobotRun on
 `SceneManifest.clock_instance(clock)` / `EpisodeManifest.clock_instance(clock)` return
 a manifest's instance.
 
+That accessor is the authority. A derived artifact persists the instance as
+`(clock, origin, scope)` and states what its manifest issued; nothing derives a scope from a
+RobotRun id, a content id, a format or a URI. A reader proves only the shape
+(`restore_clock_instance`). Whether a persisted instance is the unit's own takes the pinned
+manifest, and a dedicated verifier makes that comparison, not every read
+([ADR-021](../adr/021-cross-artifact-temporal-integrity.md)). A scope is opaque: comparability is
+equality of the whole value, and no consumer reads an element.
+
 ## 5. Canonical builder inputs
 
 `sceneops_core.provenance.pinned`. A builder receives one pinned source and builds from
@@ -460,7 +468,14 @@ and of `make test`) checks every production module under `apps/`, `packages/` an
   `permitted_clock_origins`. A binding is an expression ending in `.lineage.source`,
   or a local name assigned one (also through an alias or `:=`, and inside a closure)
   or annotated with a binding class. The same fields on a declared window, a channel,
-  a stream or an aligned output are not binding reads.
+  a stream or an aligned output are not binding reads;
+- a *scope-opacity site*: reading the elements of a clock scope by subscript, unpacking,
+  spreading, iteration, membership, a `match` sequence pattern, a Polars `.list` read or a
+  SQL element read. Comparing, storing, serializing or restoring the whole value is
+  allowed. This rule also holds in `UPSTREAM` modules; only `SCOPE_OWNERS` (the temporal
+  package and the source bindings, which issue a scope or validate its shape) are out of
+  it, and neither reads an element today. It sees the direct forms named in the checker's
+  docstring, not arbitrary data flow.
 
 A site is allowed only where its table says so, each entry with its reason:
 

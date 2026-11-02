@@ -43,9 +43,14 @@ from infra_support import (
 from sceneops_analytics import read_scene_table_bytes
 from sceneops_core.artifacts.schemas.enums import ArtifactBackend
 from sceneops_core.config import StorageSettings
+from sceneops_core.episodes.schemas import load_canonical_episode_manifest
 from sceneops_core.provenance import manifest_artifact_id_for
 from sceneops_core.scenes.schemas import load_canonical_scene_manifest
-from sceneops_core.temporal import restore_clock_instance
+from sceneops_core.temporal import (
+    IncomparableClocksError,
+    require_comparable,
+    restore_clock_instance,
+)
 from sceneops_storage.backends.s3 import S3ArtifactStore
 
 SNAPSHOTS = json.loads((REPO_ROOT / "config/reference/source-snapshots.json").read_text())["snapshots"]
@@ -61,7 +66,7 @@ ALIGNMENT = {
         for field in ("steering", "throttle", "brake")
     },
 }  # fmt: skip
-MEASUREMENTS: dict[str, float | int] = {}
+MEASUREMENTS: dict[str, object] = {}
 
 pytestmark = pytest.mark.skipif(
     not (
@@ -194,11 +199,14 @@ def _verify(tool: str, *args: str) -> dict:
     started = time.monotonic()
     completed = subprocess.run(command, capture_output=True, text=True, check=False, cwd=REPO_ROOT)
     MEASUREMENTS[f"verify_seconds.{tool}.{args[-1].rsplit('/', 1)[-1]}"] = round(time.monotonic() - started, 1)
+    assert completed.stdout, completed.stderr[-2000:]
     report = json.loads(completed.stdout)
     assert completed.returncode == 0 and report["ok"], (
         report["violations"][:5], report["undetected_controls"], completed.stderr[-2000:],
     )  # fmt: skip
-    assert report["negative_controls"] and all(c["detected"] for c in report["negative_controls"])
+    assert report["negative_controls"] and all(
+        c["detected"] or "not_applicable" in c for c in report["negative_controls"]
+    )
     return report
 
 
@@ -583,6 +591,255 @@ def test_native_labels_resolve_only_into_the_content_scene_of_a_mixed_version(
     recomposed = _succeeded(api, "compose_dataset_version", {"dataset_id": DATASET, "dataset_version": "pins", "pins": pins})
     assert (recomposed["created"], recomposed["composition_checksum"]) == (False, by_pins["composition_checksum"])
     MEASUREMENTS["mixed_native_labels_attached"] = 4699
+
+
+# ── derived temporal ownership across every family ───────────────────────────────
+
+
+NATIVE_ALIGNMENT = {"target_frequency_hz": 10.0, "tolerance_us": 50_000, "max_gap_us": 200_000}
+
+
+def _member_pin(recording: dict, domain: str) -> str:
+    (pin,) = [p for p in recording["pins"] if p["domain"] == domain]
+    return pin["manifest_artifact_id"]
+
+
+def _comparable(a: dict, b: dict) -> bool:
+    """``require_comparable`` over the report's instances, each restored the one way."""
+    try:
+        require_comparable(
+            restore_clock_instance(a["clock"], a["origin"], a["scope"]),
+            restore_clock_instance(b["clock"], b["origin"], b["scope"]),
+        )
+    except IncomparableClocksError:
+        return False
+    return True
+
+
+@pytest.fixture(scope="module")
+def temporal(api: Api, recording: dict, nuscenes: dict, pusht: dict, by_pins: dict) -> dict:
+    """One DatasetVersion of the RobotRun's Scene and Episode, the nuScenes Scene and
+    two pusht Episodes built without transitions (a pusht Episode with them is not
+    alignable); all of it aligned, exported and incrementally exported by Jobs on the
+    runtime's workers."""
+    spec = PARTS["lerobot-pusht"]
+    config = json.loads((REPO_ROOT / spec["build_config"]).read_text())
+    features = [f for f in config["features"] if f["role"] != "transition"]
+    run = api.run(
+        "snapshot_episode_building",
+        {"build_snapshot_episodes": {
+            "snapshot_id": pusht["snapshot"]["snapshot_id"],
+            "build_config": {**config, "features": features},
+            "unit_keys": ["0", "1"],
+        }},
+    )  # fmt: skip
+    assert run["status"] == "succeeded", run
+    native = _task_result(api, api.tasks(run["pipelineRunId"])["register_episodes"])["revisions"]
+    assert len(native) == 2
+    version = "temporal"
+    composed = _succeeded(
+        api, "compose_dataset_version",
+        {"dataset_id": DATASET, "dataset_version": version, "pins": recording["pins"] + nuscenes["pins"] + native},
+    )  # fmt: skip
+    (episode,) = [p for p in recording["pins"] if p["domain"] == "episode"]
+
+    def aligned(pin: dict, config: dict) -> dict:
+        return _succeeded(api, "align_episode", {
+            "episodes": [{"episode_id": pin["unit_id"], "source_artifact_id": pin["manifest_artifact_id"],
+                          "source_manifest_sha256": pin["manifest_checksum"].removeprefix("sha256:")}],
+            "dataset_id": DATASET, "dataset_version": version, "alignment_config": config,
+        })  # fmt: skip
+
+    # Another recipe than the "pins" version aligned: see the limitation test below.
+    recording_aligned = aligned(episode, {**ALIGNMENT, "target_frequency_hz": 2.0})
+    native_aligned = [aligned(p, NATIVE_ALIGNMENT) for p in sorted(native, key=lambda p: p["unit_id"])]
+    keys = {"dataset_id": DATASET, "dataset_version": version}
+    base = _succeeded(api, "export_learning_data", {
+        **keys, "inputs": recording_aligned["export_inputs"] + native_aligned[0]["export_inputs"],
+    })  # fmt: skip
+    incremental = _succeeded(api, "export_learning_data", {
+        **keys, "inputs": native_aligned[1]["export_inputs"], "base_export_id": base["export_id"],
+    })  # fmt: skip
+    assert sum(incremental["reused_shard_counts"].values()) > 0
+    analytics = api.post("/jobs", {"type": "export_analytics_snapshot", "params": keys})
+    assert analytics.status_code == 201, analytics.text
+    analytics_job = analytics.json()["job"]
+    if analytics_job["status"] not in JOB_TERMINAL:
+        assert api.post(f"/jobs/{analytics_job['jobId']}/execute", {}).status_code == 200
+    assert _wait(api, analytics_job["jobId"])["status"] == "succeeded"
+    return {
+        "version": version,
+        "composed": composed,
+        "recording_episode": episode["unit_id"],
+        "native_episodes": sorted(p["unit_id"] for p in native),
+        "aligned": [
+            recording_aligned["aligned"][0]["aligned_artifact_id"],
+            native_aligned[0]["aligned"][0]["aligned_artifact_id"],
+        ],
+        "base": base,
+        "incremental": incremental,
+        "analytics_job": analytics_job["jobId"],
+    }
+
+
+def test_a_second_version_aligning_one_recipe_of_a_revision_is_refused_today(
+    api: Api, temporal: dict, recording: dict
+) -> None:
+    """A known limitation, pinned so a fix has to update limitations.md: equal bytes
+    mean one ArtifactRecord id while the URI names the DatasetVersion, so the "pins"
+    version's alignment of this recipe conflicts here, loudly."""
+    (episode,) = [p for p in recording["pins"] if p["domain"] == "episode"]
+    job = _job(api, "align_episode", {
+        "episodes": [{"episode_id": episode["unit_id"], "source_artifact_id": episode["manifest_artifact_id"],
+                      "source_manifest_sha256": episode["manifest_checksum"].removeprefix("sha256:")}],
+        "dataset_id": DATASET, "dataset_version": temporal["version"], "alignment_config": ALIGNMENT,
+    })  # fmt: skip
+    assert job["status"] == "failed" and "already registered" in json.dumps(job["error"])
+
+
+def test_every_derived_context_is_what_its_pinned_manifest_issues(
+    api: Api, temporal: dict, recording: dict, nuscenes: dict
+) -> None:
+    """AlignedEpisode, Learning Data (reused shards included) and Scene Analytics, read
+    from the real stores by a separate read-only process against the real manifests;
+    every negative control forged over what it read and detected; nothing written."""
+    before = (_rows(), _objects())
+    report = _verify(
+        "temporal_lineage_verify.py", "verify",
+        "--aligned-artifact", temporal["aligned"][0],
+        "--aligned-artifact", temporal["aligned"][1],
+        "--learning-export", temporal["base"]["manifest_artifact_id"],
+        "--learning-export", temporal["incremental"]["manifest_artifact_id"],
+        "--analytics-job", temporal["analytics_job"],
+    )  # fmt: skip
+    assert (_rows(), _objects()) == before
+    stats = report["stats"]
+    assert stats["reused_shards_verified"] == sum(temporal["incremental"]["reused_shard_counts"].values())
+    assert stats["scenes_rows"] == 2
+    MEASUREMENTS["temporal_stats"] = stats
+    MEASUREMENTS["temporal_checks"] = report["check_count"]
+    MEASUREMENTS["temporal_controls"] = len(report["negative_controls"])
+    instances = report["instances"]
+
+    # Same report for the same inputs.
+    again = _verify(
+        "temporal_lineage_verify.py", "verify",
+        "--aligned-artifact", temporal["aligned"][0],
+        "--aligned-artifact", temporal["aligned"][1],
+        "--learning-export", temporal["base"]["manifest_artifact_id"],
+        "--learning-export", temporal["incremental"]["manifest_artifact_id"],
+        "--analytics-job", temporal["analytics_job"],
+    )  # fmt: skip
+    assert again["instances"] == instances and again["checks"] == report["checks"]
+
+    # One RobotRun across all three families. The Episode's learning data and its
+    # AlignedEpisode are one instance, the manifest's. The Scene and the Episode restore one
+    # instance on each clock both manifests declare, and nothing is claimed of a clock only
+    # one of them declares.
+    aligned_context = instances["aligned"][temporal["recording_episode"]]
+    (recording_scene,) = [p["unit_id"] for p in recording["pins"] if p["domain"] == "scene"]
+    learning = {key.split("@")[0]: value for key, value in instances["learning"].items()}
+    assert learning[temporal["recording_episode"]] == aligned_context
+    scene_clocks = instances["scene_clocks"][recording_scene]
+    record = api.get(f"/artifacts/{_member_pin(recording, 'episode')}")["artifact"]
+    manifest = load_canonical_episode_manifest(asyncio.run(_store().read_bytes(record["uri"])))
+    assert manifest.clock_instance(aligned_context["clock"]) == restore_clock_instance(
+        aligned_context["clock"], aligned_context["origin"], aligned_context["scope"]
+    )
+    episode_clocks = {d.clock for d in manifest.clock_domains}
+    shared = sorted(episode_clocks & set(scene_clocks))
+    MEASUREMENTS["temporal_recording_clocks"] = {
+        "episode_aligned": aligned_context["clock"],
+        "episode_declared": sorted(episode_clocks),
+        "scene_declared": sorted(scene_clocks),
+        "shared": shared,
+    }
+    for clock in shared:
+        issued = manifest.clock_instance(clock)
+        assert _comparable(
+            scene_clocks[clock],
+            {"clock": issued.clock, "origin": issued.origin.value, "scope": list(issued.scope)},
+        )
+    if aligned_context["clock"] in scene_clocks:
+        assert _comparable(scene_clocks[aligned_context["clock"]], aligned_context)
+    else:
+        for scene_instance in scene_clocks.values():
+            assert not _comparable(scene_instance, aligned_context)
+
+    # Identical frame times of two pusht Episodes never compare; no source is read to know.
+    first, second = (learning[e] for e in temporal["native_episodes"])
+    assert first["clock"] == second["clock"] and first["origin"] == second["origin"] == "unit"
+    assert not _comparable(first, second)
+    assert not _comparable(first, aligned_context)
+
+    # The nuScenes Scene of the same scene-0061 stays apart from the RobotRun's.
+    (native_scene,) = [p["unit_id"] for p in nuscenes["pins"] if p["domain"] == "scene"]
+    window = instances["scene_windows"][native_scene]
+    assert window["origin"] == "unix_epoch" and window["scope"] == []
+    assert not _comparable(window, instances["scene_windows"][recording_scene])
+
+
+def test_a_scene_and_an_episode_built_on_one_clock_restore_one_instance_in_every_family(
+    api: Api, temporal: dict, recording: dict
+) -> None:
+    """The reference configurations give a RobotRun's Scene and Episode different clocks,
+    which never compare. Here the Episode is built on the Scene's clock, so the same
+    instance must come out of Scene analytics, the AlignedEpisode and Learning Data, each
+    verified against its own manifest."""
+    (scene_pin,) = [p for p in recording["pins"] if p["domain"] == "scene"]
+    scene_clock = api.get(f"/scenes/{scene_pin['unit_id']}")["revisions"][0]["windowClock"]
+    config = json.loads(json.dumps(EPISODE_BUILD_CONFIG).replace("vehicle.source_time", scene_clock))
+    run_id = recording["robot_run_id"]
+    build = _succeeded(api, "build_recording_episodes", {"robot_run_id": run_id, "build_config": config})
+    register = _succeeded(api, "register_episodes", {"manifest_artifact_ids": build["manifest_artifact_ids"]})
+    (episode_pin,) = register["revisions"]
+    version = "temporal-one-clock"
+    _succeeded(api, "compose_dataset_version", {"dataset_id": DATASET, "dataset_version": version, "pins": [scene_pin, episode_pin]})
+    keys = {"dataset_id": DATASET, "dataset_version": version}
+    aligned = _succeeded(api, "align_episode", {
+        "episodes": [{"episode_id": episode_pin["unit_id"], "source_artifact_id": episode_pin["manifest_artifact_id"],
+                      "source_manifest_sha256": episode_pin["manifest_checksum"].removeprefix("sha256:")}],
+        **keys, "alignment_config": ALIGNMENT,
+    })  # fmt: skip
+    export = _succeeded(api, "export_learning_data", {**keys, "inputs": aligned["export_inputs"]})
+    analytics = _submit(api, "export_analytics_snapshot", keys)
+    assert _wait(api, analytics)["status"] == "succeeded"
+    report = _verify(
+        "temporal_lineage_verify.py", "verify",
+        "--learning-export", export["manifest_artifact_id"],
+        "--analytics-job", analytics,
+    )  # fmt: skip
+    instances = report["instances"]
+    window = instances["scene_windows"][scene_pin["unit_id"]]
+    aligned_instance = instances["aligned"][episode_pin["unit_id"]]
+    (learning,) = instances["learning"].values()
+    assert window["clock"] == scene_clock and window["origin"] == "source"
+    assert window == aligned_instance == learning
+    assert _comparable(window, aligned_instance)
+    assert _comparable(window, learning)
+    assert instances["scene_clocks"][scene_pin["unit_id"]][scene_clock] == window
+    MEASUREMENTS["temporal_one_clock_instance"] = window
+
+
+def test_a_curation_of_the_current_export_is_one_job_and_opens_through_the_reader(api: Api, temporal: dict) -> None:
+    params = {
+        "dataset_id": DATASET, "dataset_version": temporal["version"],
+        "learning_data_export_manifest_artifact_id": temporal["incremental"]["manifest_artifact_id"],
+        "policy": {},
+    }  # fmt: skip
+    first = api.post("/jobs", {"type": "curate_episodes", "params": params})
+    assert first.status_code == 201, first.text
+    job = first.json()["job"]
+    if job["status"] not in JOB_TERMINAL:
+        assert api.post(f"/jobs/{job['jobId']}/execute", {}).status_code == 200
+    finished = _wait(api, job["jobId"])
+    assert finished["status"] == "succeeded", finished.get("error")
+    assert finished["result"]["candidate_count"] == 3
+    repeat = api.post("/jobs", {"type": "curate_episodes", "params": params})
+    assert repeat.json()["job"]["jobId"] == job["jobId"]
+    forced = _succeeded(api, "curate_episodes", params)
+    assert forced["curation_id"] == finished["result"]["curation_id"]
+    assert forced["manifest_artifact_id"] == finished["result"]["manifest_artifact_id"]
 
 
 def test_measurements_are_reported(capsys) -> None:

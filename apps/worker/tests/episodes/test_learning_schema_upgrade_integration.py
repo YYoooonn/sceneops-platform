@@ -18,6 +18,7 @@ so fails there) otherwise.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -31,6 +32,10 @@ from sceneops_analytics import (
     check_learning_export_tables,
 )
 from sceneops_analytics.testing.learning_migration import write_v1_export
+from sceneops_core.artifacts.schemas.enums import ArtifactKind
+from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
+from sceneops_core.artifacts.schemas.refs import ArtifactRef
+from sceneops_core.common.derived_ids import derived_artifact_id
 from sceneops_core.common.time import utc_now
 from sceneops_core.episodes.alignment import (
     AlignedEpisodeArtifact,
@@ -43,7 +48,7 @@ from sceneops_core.episodes.learning_export import (
     LearningDataExportManifest,
     UnsupportedLearningDataSchemaError,
 )
-from sceneops_core.executions import compute_execution_key
+from sceneops_core.executions import compute_execution_key, params_for_execution_key
 from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobManifest,
@@ -73,6 +78,7 @@ from sceneops_execution.pipelines.service import PipelineService
 from sceneops_sources.lerobot_synthetic import write_lerobot_tree
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.jobs.base import JobHandlerRequest
+from sceneops_worker.jobs.dataset.curate_episodes import CurateEpisodesJobHandler
 from sceneops_worker.jobs.dataset.export_learning_data import (
     ExportLearningDataJobHandler,
 )
@@ -186,6 +192,42 @@ class _LearningEnv(_Env):
             dataset_version=VERSION,
             params={"episode_id": episode_id, "aligned_artifact_id": artifact_id},
         )
+
+    def curate_request(self, manifest_artifact_id: str) -> CreateJobRequest:
+        return CreateJobRequest(
+            type=JobType.CURATE_EPISODES,
+            dataset_id=self.dataset_id,
+            dataset_version=VERSION,
+            params={
+                "learning_data_export_manifest_artifact_id": manifest_artifact_id,
+                "policy": {},
+            },
+        )
+
+    async def register_export_manifest(self, uri: str, data: bytes) -> str:
+        """The ArtifactRecord an earlier deployment left beside its manifest."""
+        checksum = "sha256:" + hashlib.sha256(data).hexdigest()
+        artifact_id = derived_artifact_id(
+            prefix="lexport", logical_id=json.loads(data)["exportId"], checksum=checksum
+        )
+        async with get_async_sessionmaker()() as session:
+            context = self.context(session)
+            await context.artifact_record_store.register(
+                artifact_id=artifact_id,
+                ref=ArtifactRef(
+                    kind=ArtifactKind.LEARNING_DATA_EXPORT_MANIFEST,
+                    uri=uri,
+                    media_type="application/json",
+                    checksum=checksum,
+                    size_bytes=len(data),
+                ),
+                owner_type=ArtifactOwnerType.DATASET_VERSION,
+                owner_id=f"{self.dataset_id}:{VERSION}",
+                dataset_id=self.dataset_id,
+                dataset_version=VERSION,
+            )
+            await session.commit()
+        return artifact_id
 
     def export_request(self, inputs, **params) -> CreateJobRequest:
         return CreateJobRequest(
@@ -398,6 +440,72 @@ async def test_a_v1_aligned_pin_gets_a_new_export_job_and_is_refused(env):
     with pytest.raises(UnsupportedAlignedArtifactSchemaError, match="'v1'"):
         await env.run_job(ExportLearningDataJobHandler, job)
     assert await env.objects() == objects
+
+
+async def test_a_succeeded_curation_of_a_v1_export_is_not_the_current_result(env):
+    """CURATE's handler reads the export under the schema of its day, and its key said
+    nothing about that schema: an unforced request returned the old Job, ``selected``
+    decisions included, for an export today's reader refuses."""
+    revisions = await env.compose_two_episodes()
+    entries = await env.aligned_entries(await env.align(revisions))
+    uri, data = await write_v1_export(
+        env.writer, dataset_id=env.dataset_id, dataset_version=VERSION, entries=entries
+    )
+    manifest_id = await env.register_export_manifest(uri, data)
+    request = env.curate_request(manifest_id)
+    objects = await env.objects()
+
+    # The transform of that deployment: nothing of what this change injects.
+    async with get_async_sessionmaker()() as session:
+        probe = await _service(session).create_job(request)
+        await session.rollback()
+    injected = ("learning_data_schema_version", "curation_semantics_version")
+    legacy_params = {
+        k: v
+        for k, v in params_for_execution_key(
+            JobType.CURATE_EPISODES, probe.params
+        ).items()
+        if k not in injected
+    }
+    old = await env.seed_succeeded_job(
+        request, legacy_key=env.legacy_key(JobType.CURATE_EPISODES, legacy_params)
+    )
+
+    current = await env.create(request)
+    assert current.job_id != old.job_id
+    assert current.status == JobStatus.PENDING
+
+    with pytest.raises(UnsupportedLearningDataSchemaError, match="'v1'"):
+        await env.run_job(CurateEpisodesJobHandler, current)
+    assert await env.objects() == objects
+
+
+async def test_a_curation_of_a_current_export_converges_across_the_key_change(env):
+    """A Job that succeeded under the earlier key is run once more, and because the
+    export is current it reaches the same curation, object and record."""
+    revisions = await env.compose_two_episodes()
+    export = await env.run_job(
+        ExportLearningDataJobHandler,
+        await env.create(env.export_request(_inputs(await env.align(revisions)))),
+    )
+    request = env.curate_request(export.manifest_artifact_id)
+
+    first = await env.create(request)
+    result = await env.run_job(CurateEpisodesJobHandler, first)
+    await env.succeed(first)
+    objects = await env.objects()
+    rows = await env.artifact_rows()
+
+    again = await env.create(request)
+    assert (again.job_id, again.status) == (first.job_id, JobStatus.SUCCEEDED)
+
+    forced = await env.create(request.model_copy(update={"force": True}))
+    assert forced.job_id != first.job_id
+    repeat = await env.run_job(CurateEpisodesJobHandler, forced)
+    assert repeat.curation_id == result.curation_id
+    assert repeat.manifest_artifact_id == result.manifest_artifact_id
+    assert await env.objects() == objects
+    assert await env.artifact_rows() == rows
 
 
 async def test_a_v1_base_is_refused_before_reuse_and_writes_nothing(env):

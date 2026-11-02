@@ -101,10 +101,10 @@ def _flatten_battery_state(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _us_to_datetime(timestamp_us: int) -> datetime:
-    """message.log_time is real wall-clock time (rclpy's system clock, not a
-    simulated one), so treating it as a genuine UTC timestamp is valid here —
-    unlike RobotState.timestamp_us, which stays a raw int throughout since it
-    represents "when in the recording", not "when was this row created"."""
+    """A mission's timestamps as UTC, taking message.log_time for wall-clock time.
+    That is this projection's assumption and no contract states it: a canonical
+    manifest declares ``mcap_log_time`` with origin ``source``, whose epoch it does
+    not assert (ADR-021). RobotState.timestamp_us stays the raw log time."""
     return datetime.fromtimestamp(timestamp_us / 1_000_000, tz=timezone.utc)
 
 

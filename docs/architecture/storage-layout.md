@@ -220,6 +220,21 @@ and refuses a Scene table. MinIO/S3-stored Parquet files can't be queried direct
 DuckDB's httpfs/S3 extension (not wired up); the supported path downloads to local disk
 first, then queries.
 
+A SQL query compares what it names. Timestamps of two rows are comparable only on equal
+whole instances, so a join between Scenes states all of it:
+
+```sql
+SELECT a.observation_id, b.observation_id
+FROM observations a JOIN observations b
+  ON a.timestamp_ns = b.timestamp_ns
+ AND a.source_clock = b.source_clock
+ AND a.clock_origin = b.clock_origin
+ AND a.clock_scope  = b.clock_scope
+```
+
+Equal `source_clock` and `timestamp_ns` alone match unrelated RobotRuns. No clock is ever
+converted to make two instances comparable.
+
 `export_analytics_snapshot` only covers Scene-domain tables — Episode has
 no equivalent flat export. Aligned Episode revisions
 do have their own Parquet export under a different scheme; see below.

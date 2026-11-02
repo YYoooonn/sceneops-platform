@@ -1,6 +1,6 @@
-"""VALIDATE_ALIGNED_EPISODE, PROFILE_ALIGNED_EPISODE, EXPORT_LEARNING_DATA and
-EXPORT_ANALYTICS_SNAPSHOT are keyed on the contracts their results depend on, and no
-other JobType moved.
+"""VALIDATE_ALIGNED_EPISODE, PROFILE_ALIGNED_EPISODE, EXPORT_LEARNING_DATA,
+EXPORT_ANALYTICS_SNAPSHOT and CURATE_EPISODES are keyed on the contracts their results
+depend on, and no other JobType moved.
 
 The frozen keys were computed by the code before those contracts entered the keys:
 what a Job that succeeded back then still has in its execution_key column. Reuse
@@ -18,6 +18,7 @@ from sceneops_core.episodes.alignment import (
     ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION,
     ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION,
 )
+from sceneops_core.episodes.curation import CURATION_SEMANTICS_VERSION
 from sceneops_core.episodes.learning_export import LEARNING_DATA_SCHEMA_VERSION
 from sceneops_core.executions import compute_execution_key, params_for_execution_key
 from sceneops_core.executions import key as key_module
@@ -76,11 +77,11 @@ KEYS_BEFORE_THE_CONTRACTS_ENTERED = {
     JobType.PROFILE_ALIGNED_EPISODE: "profile_aligned_episode:3956ff6aeb0d93fdf5b18afe",
     JobType.EXPORT_LEARNING_DATA: "export_learning_data:68b8cb2b59fa111c9e55aede",
     JobType.EXPORT_ANALYTICS_SNAPSHOT: "export_analytics_snapshot:7a22c52ac893847fa4751373",
+    JobType.CURATE_EPISODES: "curate_episodes:acedcf635c741449030094c1",
 }
 
 UNCHANGED_KEYS = {
     JobType.ALIGN_EPISODE: "align_episode:462f59d5daee999048546fe8",
-    JobType.CURATE_EPISODES: "curate_episodes:acedcf635c741449030094c1",
     JobType.VALIDATE_EPISODE: "validate_episode:74588db3473c412a1f29bd6d",
     JobType.BUILD_SNAPSHOT_EPISODES: "build_snapshot_episodes:bd53dd92c3269fc2ad19483f",
 }
@@ -167,6 +168,30 @@ def test_export_key_follows_the_learning_schema_and_not_the_aligned_one(
     assert _key(JobType.EXPORT_LEARNING_DATA) == current
     monkeypatch.setattr(key_module, "LEARNING_DATA_SCHEMA_VERSION", "v9")
     assert _key(JobType.EXPORT_LEARNING_DATA) != current
+
+
+def test_curation_key_follows_the_learning_schema_and_the_curation_semantics(
+    monkeypatch,
+) -> None:
+    """The handler reads the pinned export under today's schema and decides under
+    today's semantics, and neither is a Job input. The aligned schema stays out, as
+    for EXPORT: a v2 export names only v2 artifacts, and a selection over it stays true
+    of what it pins when a later aligned schema arrives."""
+    current = _key(JobType.CURATE_EPISODES)
+    params = params_for_execution_key(
+        JobType.CURATE_EPISODES, CASES[JobType.CURATE_EPISODES]
+    )
+    assert params["learning_data_schema_version"] == LEARNING_DATA_SCHEMA_VERSION
+    assert params["curation_semantics_version"] == CURATION_SEMANTICS_VERSION
+    assert "aligned_artifact_schema_version" not in params
+
+    monkeypatch.setattr(key_module, "ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION", "v9")
+    assert _key(JobType.CURATE_EPISODES) == current
+    with monkeypatch.context() as patch:
+        patch.setattr(key_module, "LEARNING_DATA_SCHEMA_VERSION", "v9")
+        assert _key(JobType.CURATE_EPISODES) != current
+    monkeypatch.setattr(key_module, "CURATION_SEMANTICS_VERSION", "v9")
+    assert _key(JobType.CURATE_EPISODES) != current
 
 
 def test_analytics_export_key_follows_the_scene_analytics_schema_alone(

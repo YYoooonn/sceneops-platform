@@ -4,7 +4,9 @@
 
 **Accepted (2026-11-02, Canonical Domain Boundaries P5.2B).** The `scenes`, `observations` and
 `keyframes` tables only. Follows [ADR-019](./019-learning-data-schema-v2-and-contract-aware-jobs.md),
-whose footer stamp and Job identity it reuses. `robot_telemetry` and `missions` are unchanged.
+whose footer stamp and Job identity it reuses. `robot_telemetry` and `missions` are unchanged. **The
+open P5.3 item is closed by [ADR-021](./021-cross-artifact-temporal-integrity.md)**, which also
+classifies the robot tables.
 
 ## Context
 

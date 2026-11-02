@@ -214,6 +214,44 @@ RobotRun), `source_swap` (a LeRobot unit under the nuScenes content),
 `summary_channels`, `checksum_of_other_pins`, `selector_clause` (a clause naming
 another content).
 
+### Derived temporal ownership (canonical manifest → derived artifacts)
+
+`temporal_lineage_verify.py` ([ADR-021](../adr/021-cross-artifact-temporal-integrity.md)) answers a
+different question and is not independent of the platform: the raw-source verifiers above prove a
+manifest against its source, and this one holds derived artifacts to that manifest, so it runs on the
+platform's own contracts. `manifest.clock_instance(clock)` of the pinned revision is the expected
+value, and `restore_clock_instance` is the one reconstruction. No scope is built, and none of its
+elements is read.
+
+```text
+AlignedEpisode Artifact   -> source_revision -> EpisodeManifest
+Learning export           -> AlignedArtifactRevision -> AlignedEpisode -> EpisodeManifest
+Scene analytics tables    -> DatasetVersion member -> SceneManifest
+```
+
+| Holds | Codes |
+| --- | --- |
+| the aligned artifact's record, bytes, schema and structure | `aligned_record`, `aligned_checksum`, `aligned_schema`, `aligned_parse`, `aligned_structure` |
+| its source revision: record, bytes, canonical parse, id of (unit, checksum), and what the alignment's record names | `source_revision_record`, `source_revision_checksum`, `source_revision_load`, `source_revision_identity`, `aligned_record` |
+| the Episode it states is the unit its manifest binds | `episode_identity` |
+| its clock instance is the manifest's, on a declared clock | `aligned_clock_declared`, `aligned_clock_instance` |
+| its steps are what its recipe derives from that manifest, recomputed | `aligned_content` |
+| the export's manifest, every table and shard (reused ones included) | `export_record`, `export_checksum`, `export_schema`, `export_parse`, `learning_table_checksum`, `learning_shard_checksum`, `learning_row_counts`, `learning_table_schema`, `learning_open` |
+| each `learning_episodes` row against its AlignedEpisode and its manifest | `learning_clock_instance`, `learning_metadata`, `learning_row_identity` |
+| each row group and step against that Episode | `learning_rows_owner`, `learning_steps` |
+| the aligned revision is the one the export's DatasetVersion pins | `learning_membership` |
+| a table's bytes are a registered table of the version | `scene_table_record`, `scene_table_schema`, `scene_table_structure` |
+| rows are the version's members at the revisions it pins | `scene_membership`, `scene_revision`, `scene_revision_record`, `scene_revision_checksum`, `scene_revision_load`, `scene_revision_pairing` |
+| source provenance, window and counts of `scenes` | `scene_provenance`, `scene_window_instance`, `scene_window_time`, `scene_counts` |
+| each observation against its canonical observation and its channel's clock | `observation_rows`, `observation_instance`, `observation_content` |
+| each keyframe against its canonical group and the group's clock | `keyframe_rows`, `keyframe_instance`, `keyframe_content` |
+
+A row's source is compared as a whole with what `project_scene_revision` makes of the pinned
+manifest, so the verifier holds no rule of its own about which id belongs to which source kind.
+Every pinned revision is resolved once per run and each row costs a lookup in memory, so a run makes
+one manifest read per distinct revision, and one recomputed alignment per distinct aligned artifact;
+the report's `stats` state both. Reads are `GET` requests and object reads.
+
 ## Negative controls
 
 Every command runs its controls and fails when one is not detected. A *consistent*
@@ -229,6 +267,14 @@ composition checksum), so only the independent expectations can catch it.
 
 `verify` runs the platform controls on a copy of the collected observation, only when
 that observation passes.
+
+The controls of `temporal_lineage_verify.py` are forged in a read-only overlay of the state that
+passed, and a forgery is self-consistent: the forged bytes are the pinned ones, and the readers accept
+them, so a wrong scope reaches the comparison with the manifest. They cover a structurally valid scope of
+another unit, the right scope on another origin, another or an undeclared clock id, another revision and
+another Episode, a schema the reader does not read, changed bytes, shifted steps, swapped row groups, a
+fault in a shard reused by an incremental export, a window's instance substituted for an observation's,
+another payload, channel or source, a row outside the version, and a table no record names.
 
 ## Commands
 
@@ -250,6 +296,9 @@ make reference-verify-mixed DATASET=<id>/<version>    the platform's mixed Datas
 make reference-verify-nuscenes-labels-selftest native label rules on a synthetic state   no stack
 make reference-verify-nuscenes-labels SNAPSHOT_ID=<id> LABEL_SET_ARTIFACT=<id> [VIEWS="<id> ..."]
                                                the platform's native LabelSet, Scene and views, read-only
+make reference-verify-temporal-selftest        derived temporal ownership on a synthetic state   no stack
+make reference-verify-temporal [ALIGNED="<id> ..."] [LEARNING_EXPORT="<id> ..."] [ANALYTICS_JOB="<id> ..."]
+                                               the platform's derived artifacts against their manifests, read-only
 ```
 
 `make test-infrastructure SUITE=lerobot-episodes` builds pusht on a disposable runtime
@@ -258,7 +307,9 @@ DatasetVersion. `make test-infrastructure SUITE=nuscenes-scenes` builds the scen
 slice on a disposable runtime and runs `reference-verify-nuscenes-scene` with its
 DatasetVersion. `make test-infrastructure SUITE=mixed-sources` builds all three parts on
 a disposable runtime, composes them by pins and by selector, runs
-`reference-verify-mixed` on both versions and each part's own verifier.
+`reference-verify-mixed` on both versions and each part's own verifier; it then aligns, exports,
+incrementally exports and snapshots a version of all source kinds and runs
+`reference-verify-temporal` on the result.
 `make test-infrastructure SUITE=nuscenes-labels` builds the scene-0061 Scene, imports its
 native labels and builds a CAM_FRONT- and a LIDAR_TOP-anchored view on a disposable
 runtime and runs `reference-verify-nuscenes-labels` on them.
@@ -331,7 +382,12 @@ platform.
   `nuscenes-labels` infrastructure suite, not by the verifier.
 - **Not covered here.** Validation / profile readiness (the baseline verifiers),
   derived resources other than native LabelSets and the views pinning them (rendered
-  RobotRun LabelSets, scenarios, alignment, exports), and the Recovery workflows.
+  RobotRun LabelSets, scenarios), and the Recovery workflows. Alignment and exports have
+  the temporal verifier, not raw-source rules.
+- **Derived temporal ownership.** A named artifact or export only: it does not discover
+  what a DatasetVersion was exported to. A Parquet `robot_telemetry` or `missions` table states
+  no instance and is not read. A recomputed alignment holds only under the semantics version the
+  installed engine implements; a stored artifact of an earlier version reports `aligned_content`.
 - A saved observation (`verify --observation-in`) carries no captured recordings, so
   its Streaming Acquisition runs fail with `streaming_content`.
 - **Captured recordings.** A streamed RobotRun pins its capture, whose `log_time` and

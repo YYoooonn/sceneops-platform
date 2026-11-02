@@ -131,7 +131,8 @@ def restore_clock_instance(
 
     The check is structural. Scope elements stay opaque, so it neither reads
     what they name nor establishes that the scope belongs to the unit the
-    representation describes; that takes the unit's canonical manifest."""
+    representation describes; that takes the unit's canonical manifest, the
+    comparison tools/reference/temporal_lineage.py makes (ADR-021)."""
     try:
         validate_source_clock(clock)
         resolved = ClockOrigin(origin)

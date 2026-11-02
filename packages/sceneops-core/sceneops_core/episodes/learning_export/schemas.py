@@ -52,8 +52,7 @@ class LearningDataExportConfig(SceneOpsBaseModel):
 class LearningDataExportManifest(SceneOpsBaseModel):
     """Index for one complete columnar snapshot (SceneOps V2 Request 2.5
     §6). Multiple snapshots for the same DatasetVersion coexist -- each
-    export gets its own export_id-scoped path, never overwriting another
-    export's tables the way EXPORT_ANALYTICS_SNAPSHOT's Scene tables do.
+    export gets its own export_id-scoped path, and no object is overwritten.
 
     The stored document must state the supported schema version itself. There
     is no default: a missing version would otherwise be read as the current

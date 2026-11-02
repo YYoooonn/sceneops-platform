@@ -4,7 +4,8 @@
 
 **Accepted (2026-11-02, Canonical Domain Boundaries P5.2A).** Learning tables only; Scene
 analytics tables are unchanged. Amends [ADR-018](./018-aligned-episode-temporal-context.md),
-whose context this carries from AlignedEpisode into the learning export.
+whose context this carries from AlignedEpisode into the learning export. **The open CURATE_EPISODES
+and P5.3 items are closed by [ADR-021](./021-cross-artifact-temporal-integrity.md).**
 
 ## Context
 

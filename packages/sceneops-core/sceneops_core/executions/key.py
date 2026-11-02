@@ -9,6 +9,7 @@ from sceneops_core.episodes.alignment import (
     ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION,
     ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION,
 )
+from sceneops_core.episodes.curation.semantics import CURATION_SEMANTICS_VERSION
 from sceneops_core.episodes.learning_export import LEARNING_DATA_SCHEMA_VERSION
 from sceneops_core.jobs.schemas.enums import JobType
 from sceneops_core.scenes.analytics import SCENE_ANALYTICS_SCHEMA_VERSION
@@ -167,6 +168,16 @@ def _curate_episodes_transform(params: dict[str, Any]) -> dict[str, Any]:
     (not duplicated as literals) specifically because drift between the
     literal here and the actual installed version is exactly the class of
     bug this request closes.
+
+    The learning data schema and the curation semantics version are injected
+    for the same reason: the handler reads the pinned export under today's
+    schema and decides under today's semantics, and ``episode_curation_id``
+    already keys on the semantics. Without the schema a Job that succeeded
+    earlier would be returned for an export today's reader refuses. The aligned
+    artifact schema is deliberately not injected, as for EXPORT_LEARNING_DATA:
+    an export of the current schema names only artifacts of that schema, and
+    a selection over it stays true of what it pins when a later aligned schema
+    arrives.
     """
     transformed = {
         k: v
@@ -190,6 +201,8 @@ def _curate_episodes_transform(params: dict[str, Any]) -> dict[str, Any]:
         ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION
     )
     transformed["profile_semantics_version"] = ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION
+    transformed["curation_semantics_version"] = CURATION_SEMANTICS_VERSION
+    transformed["learning_data_schema_version"] = LEARNING_DATA_SCHEMA_VERSION
     return transformed
 
 

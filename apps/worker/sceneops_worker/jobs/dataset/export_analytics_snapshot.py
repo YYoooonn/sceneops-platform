@@ -69,8 +69,7 @@ class ExportAnalyticsSnapshotJobHandler(
 
         requested_tables = set(params.tables) if params.tables else set(TABLE_BUILDERS)
 
-        # Analytics tables are a full snapshot of the current DB/manifest state —
-        # always query all registered scenes of the DatasetVersion.
+        # A snapshot covers every Scene revision the DatasetVersion pins.
         all_scene_records = await list_dataset_version_scenes(
             context, dataset_id=dataset_id, dataset_version=dataset_version
         )

@@ -5,7 +5,8 @@
 **Accepted (2026-11-01, Canonical Domain Boundaries P5.1).** AlignedEpisode only.
 **Amended by [ADR-019](./019-learning-data-schema-v2-and-contract-aware-jobs.md)
 (2026-11-02)**, which carries the context into the learning tables and adds the contract to
-the VALIDATE, PROFILE and EXPORT Job identities. This record keeps what was decided and known
+the VALIDATE, PROFILE and EXPORT Job identities. **Open P5.3 item closed by
+[ADR-021](./021-cross-artifact-temporal-integrity.md).** This record keeps what was decided and known
 on its date. Scene analytics tables still discard the context; see
 [Consequences](#consequences).
 

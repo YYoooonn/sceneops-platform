@@ -644,3 +644,217 @@ def test_a_violation_injected_into_protected_code_is_rejected(tmp_path, case):
     assert violations, case
     assert all(f"({function}): " in v for v in violations), violations
     assert any(f"({function}): {what}" in v for v in violations), violations
+
+
+# ── clock scope opacity ──────────────────────────────────────────────────────
+
+SCOPE_MUTATION = "packages/sceneops-x/sceneops_x/scope_consumer.py"
+
+SCOPE_READS = {
+    "subscript": "def f(clock_scope, other):\n    return clock_scope[0] == other\n",
+    "subscript_literal": 'def f(clock_scope):\n    if clock_scope[0] == "recording":\n        pass\n',
+    "instance_literal": 'def f(instance):\n    if instance.scope[0] == "content":\n        pass\n',
+    "negative_index": "def f(clock_scope):\n    return clock_scope[-1]\n",
+    "slice": "def f(clock_scope):\n    return clock_scope[:1]\n",
+    "row_key": 'def f(row):\n    return row["clock_scope"][0]\n',
+    "row_window_key": 'def f(row):\n    return row["window_clock_scope"][0]\n',
+    "row_get": 'def f(row):\n    return row.get("clock_scope")[0]\n',
+    "attribute": "def f(ae):\n    return ae.clock_scope[0]\n",
+    "window_attribute": "def f(obj):\n    return obj.window_clock_scope[0]\n",
+    "named_instance": "def f(instance):\n    return instance.scope[0]\n",
+    "suffixed_instance": "def f(window_instance):\n    return window_instance.scope[0]\n",
+    "annotated_instance": "def f(x: ClockInstance):\n    return x.scope[0]\n",
+    "string_annotation": 'def f(x: "ClockInstance"):\n    return x.scope[0]\n',
+    "property": "def f(ae):\n    return ae.clock_instance.scope[0]\n",
+    "accessor": "def f(m, c):\n    return m.clock_instance(c).scope[0]\n",
+    "restored": "def f(c, o, s):\n    return restore_clock_instance(c, o, s).scope[0]\n",
+    "converted": "def f(instance):\n    return list(instance.scope)[0]\n",
+    "tuple_converted": "def f(clock_scope):\n    return tuple(clock_scope)[0]\n",
+    "unpack": "def f(clock_scope):\n    kind, source_id = clock_scope\n",
+    "unpack_star": "def f(clock_scope):\n    kind, *rest = clock_scope\n",
+    "unpack_list": "def f(clock_scope):\n    [kind, source_id] = clock_scope\n",
+    "unpack_instance": "def f(x: ClockInstance):\n    kind, source_id = x.scope\n",
+    "unpack_converted": "def f(instance):\n    kind, source_id = list(instance.scope)\n",
+    "alias": "def f(instance):\n    scope = instance.scope\n    return scope[0]\n",
+    "alias_of_alias": "def f(clock_scope):\n    a = clock_scope\n    b = a\n    return b[0]\n",
+    "alias_converted": "def f(instance):\n    scope = tuple(instance.scope)\n    kind, _ = scope\n",
+    "alias_of_instance": "def f(m, c):\n    i = m.clock_instance(c)\n    return i.scope[0]\n",
+    "walrus": "def f(row):\n    if (s := row['clock_scope']):\n        return s[0]\n",
+    "enclosing_alias": "def f(instance):\n    scope = instance.scope\n    def g():\n        return scope[0]\n    return g\n",
+    "for": "def f(clock_scope):\n    for element in clock_scope:\n        pass\n",
+    "comprehension": "def f(clock_scope):\n    return [e for e in clock_scope]\n",
+    "next_iter": "def f(clock_scope):\n    return next(iter(clock_scope))\n",
+    "enumerate": "def f(clock_scope):\n    return list(enumerate(clock_scope))\n",
+    "spread": "def f(clock_scope):\n    g(*clock_scope)\n",
+    "membership": "def f(clock_scope, x):\n    return x in clock_scope\n",
+    "not_membership": "def f(clock_scope, x):\n    return x not in clock_scope\n",
+    "match": "def f(clock_scope):\n    match clock_scope:\n        case [kind, _]:\n            return kind\n",
+    "polars": 'def f(df):\n    return df.select(pl.col("clock_scope").list.get(0))\n',
+    "polars_first": 'def f(df):\n    return df.select(pl.col("window_clock_scope").list.first())\n',
+    "sql_subscript": 'def f(con):\n    return con.execute("SELECT clock_scope[1] FROM observations")\n',
+    "sql_extract": 'def f(con):\n    return con.execute("SELECT list_extract(window_clock_scope, 1) FROM scenes")\n',
+    "sql_unnest": 'def f(con):\n    return con.execute("SELECT unnest(clock_scope) FROM keyframes")\n',
+}
+
+SCOPE_ALLOWED = {
+    "whole_equality": "def f(a, b):\n    return a.clock_scope == b.clock_scope\n",
+    "whole_instance": "def f(a, b):\n    require_comparable(a.clock_instance, b.clock_instance)\n",
+    "restore": 'def f(row):\n    return restore_clock_instance(row["source_clock"], row["clock_origin"], row["clock_scope"])\n',
+    "serialize": 'def f(instance):\n    return {"clock_scope": list(instance.scope)}\n',
+    "serialize_json": "def f(clock_scope):\n    return json.dumps(list(clock_scope))\n",
+    "carry": "def f(instance):\n    return AlignedEpisode(clock_scope=instance.scope)\n",
+    "log": 'def f(clock_scope):\n    log.info("scope %s", clock_scope)\n',
+    "column_select": 'def f(df):\n    return df.select("clock_scope")\n',
+    "column_join": 'def f(df):\n    return df.with_columns(pl.col("clock_scope").list.join("/"))\n',
+    "polars_other_column": 'def f(df):\n    return df.select(pl.col("observed_channels").list.get(0))\n',
+    "sql_whole": 'def f(con):\n    return con.execute("SELECT * FROM a JOIN b ON a.clock_scope = b.clock_scope")\n',
+    "docstring": 'def f():\n    """Never read clock_scope[0]."""\n',
+    "other_scope_attribute": 'def f(request):\n    return request.scope["path"]\n',
+    "args_scope": "def f(args):\n    return args.scope[0]\n",
+    "bare_scope_name": "def f(scope):\n    return scope[0]\n",
+    "row_of_other_column": 'def f(row):\n    return row["source_clock"][0]\n',
+    "reassign_other": "def f(instance):\n    a, b = 1, 2\n    return a + b\n",
+    "iterate_other": "def f(items):\n    for x in items:\n        pass\n",
+}
+
+
+def _scope_violations(tmp_path: Path, source: str, **tables) -> list[str]:
+    root = _repo(tmp_path, {SCOPE_MUTATION: source})
+    return [v for v in _isolated(root, scope_owners={}, **tables) if "clock scope" in v]
+
+
+@pytest.mark.parametrize("form", SCOPE_READS)
+def test_reading_a_scope_element_is_rejected(tmp_path, form):
+    violations = _scope_violations(tmp_path, SCOPE_READS[form])
+    assert len(violations) >= 1, SCOPE_READS[form]
+    assert all("a clock scope is opaque" in v for v in violations)
+
+
+@pytest.mark.parametrize("form", SCOPE_ALLOWED)
+def test_carrying_or_comparing_a_whole_scope_is_allowed(tmp_path, form):
+    assert _scope_violations(tmp_path, SCOPE_ALLOWED[form]) == [], SCOPE_ALLOWED[form]
+
+
+def test_a_scope_read_is_reported_where_it_is(tmp_path):
+    source = "def outer(clock_scope):\n\n    return clock_scope[0]\n"
+    (violation,) = _scope_violations(tmp_path, source)
+    assert f"{SCOPE_MUTATION}:3 (outer): subscripts a clock scope" in violation
+
+
+def test_a_scope_owner_may_validate_the_shape_and_no_one_else(tmp_path):
+    read = "def f(clock_scope):\n    return clock_scope[0]\n"
+    owner = "packages/sceneops-core/sceneops_core/temporal/shape.py"
+    root = _repo(tmp_path, {owner: read, CONSUMER: read})
+    violations = _isolated(root, scope_owners=dispatch.SCOPE_OWNERS)
+    assert len(violations) == 1 and violations[0].startswith(CONSUMER)
+
+
+def test_the_rule_holds_in_source_aware_modules_too(tmp_path):
+    """Registration may dispatch on a source; it has the binding and no use for a
+    scope's elements."""
+    module = "apps/worker/sceneops_worker/scenes/registration.py"
+    source = (
+        "def f(record, clock_scope):\n"
+        '    if record.source_kind == "recording":\n'
+        "        pass\n"
+    )
+    root = _repo(tmp_path, {module: source})
+    assert _isolated(root, upstream=dispatch.UPSTREAM) == []
+    root = _repo(tmp_path, {module: source + "    return clock_scope[0]\n"})
+    (violation,) = _isolated(root, upstream=dispatch.UPSTREAM)
+    assert "a clock scope is opaque" in violation
+
+
+PROTECTED_SCOPE_MODULES = (
+    "packages/sceneops-analytics/sceneops_analytics/tables.py",
+    "packages/sceneops-analytics/sceneops_analytics/learning_tables.py",
+    "packages/sceneops-analytics/sceneops_analytics/learning_dataset/dataset.py",
+    "packages/sceneops-core/sceneops_core/episodes/alignment/schemas.py",
+    "packages/sceneops-core/sceneops_core/episodes/alignment/engine.py",
+    "packages/sceneops-core/sceneops_core/temporal/clocks.py",
+    "packages/sceneops-core/sceneops_core/provenance/sources.py",
+    ALIGN_JOB,
+    SCENE_REGISTRATION,
+)
+
+
+@pytest.mark.parametrize("module", PROTECTED_SCOPE_MODULES)
+def test_real_modules_read_no_scope_element(tmp_path, module):
+    root = _repo(tmp_path, {module: (REPO_ROOT / module).read_text()})
+    assert [
+        site
+        for site in dispatch.sites(root / module, module)
+        if site.rule == dispatch.SCOPE_OPACITY
+    ] == []
+
+
+@pytest.mark.parametrize(
+    "module",
+    [m for m in PROTECTED_SCOPE_MODULES if not m.endswith(("clocks.py", "sources.py"))],
+)
+def test_a_scope_read_injected_into_a_real_module_is_rejected(tmp_path, module):
+    source = (REPO_ROOT / module).read_text()
+    injected = (
+        source
+        + "\n\ndef _injected(instance):\n    kind, _ = instance.scope\n    return kind\n"
+    )
+    root = _repo(tmp_path, {module: injected})
+    violations = [
+        v
+        for v in _isolated(
+            root, scope_owners=dispatch.SCOPE_OWNERS, upstream=dispatch.UPSTREAM
+        )
+        if "a clock scope is opaque" in v
+    ]
+    assert len(violations) == 1 and "(_injected)" in violations[0]
+
+
+@pytest.mark.parametrize("module", ["clocks.py", "sources.py"])
+def test_an_owner_module_is_exempt_only_under_its_own_path(tmp_path, module):
+    owner = next(m for m in PROTECTED_SCOPE_MODULES if m.endswith(module))
+    read = (
+        REPO_ROOT / owner
+    ).read_text() + "\n\ndef _shape(clock_scope):\n    return clock_scope[0]\n"
+    root = _repo(tmp_path, {owner: read})
+    assert not [
+        v
+        for v in _isolated(root, scope_owners=dispatch.SCOPE_OWNERS)
+        if "clock scope" in v
+    ]
+    moved = f"packages/sceneops-x/sceneops_x/{module}"
+    root = _repo(tmp_path / "moved", {moved: read})
+    assert [
+        v
+        for v in _isolated(root, scope_owners=dispatch.SCOPE_OWNERS)
+        if "clock scope" in v
+    ]
+
+
+def test_the_repository_reads_no_scope_element_outside_its_owners():
+    assert [v for v in dispatch.check() if "clock scope" in v] == []
+    # Nothing relies on an exception today: the owners are allowed to, and do not.
+    reads = []
+    for path, module in dispatch.production_modules(REPO_ROOT):
+        reads += [
+            s for s in dispatch.sites(path, module) if s.rule == dispatch.SCOPE_OPACITY
+        ]
+    assert reads == []
+
+
+@pytest.mark.parametrize(
+    "indirect",
+    [
+        'def f(row, column="clock_scope"):\n    return row[column][0]\n',
+        "def f(obj):\n    return obj.get_scope()[0]\n",
+        "def f(self):\n    self._s = self.clock_scope\n    return self._s[0]\n",
+        'def f(obj):\n    return getattr(obj, "clock_scope")[0]\n',
+        "def f(clock_scope):\n    return len(clock_scope) == 2\n",
+        'def f(rows):\n    return [r["clock_scope"] for r in rows][0][0]\n',
+    ],
+)
+def test_the_rule_is_a_guard_against_direct_forms_not_a_dataflow_analysis(
+    tmp_path, indirect
+):
+    """Stated so the limit stays visible: these are not detected. ADR-021's manifest
+    comparison does not depend on this rule."""
+    assert _scope_violations(tmp_path, indirect) == []

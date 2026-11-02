@@ -65,6 +65,34 @@ Name tracking is flow-insensitive and local: it follows assignments to plain nam
 only, not attributes (`self._source = ...`), containers, return values or calls into
 other functions. It is a guard against the direct forms, not a data-flow analysis.
 
+A *clock scope* is opaque everywhere (ADR-018, ADR-021): timestamps are comparable when
+whole instances are equal, so nothing needs to know what an element names, and reading
+one would be a source switch by another name. A *scope-opacity site* reads the elements
+of a scope:
+
+  * a subscript or slice, `clock_scope[0]`, `instance.scope[0]`, `list(scope)[0]`;
+  * unpacking, `kind, source_id = clock_scope`, or spreading, `f(*clock_scope)`;
+  * iteration, `for element in clock_scope` and comprehensions, or passing it to
+    `next`, `enumerate`, `zip`, `map`, `filter`, `min` or `max`;
+  * membership, `"x" in clock_scope`, and a `match` with a sequence pattern on it;
+  * a Polars element read, `pl.col("clock_scope").list.get(0)` (`.list.first()`, ...);
+  * a SQL element read in a string, `clock_scope[1]`, `list_extract(clock_scope, ...)`,
+    `unnest(clock_scope)`.
+
+A scope is a name or attribute called `clock_scope` / `*_clock_scope`, the same key read
+from a row (`row["clock_scope"]`, `.get("clock_scope")`), `.scope` of an instance (a name
+annotated `ClockInstance` or called `instance` / `*_instance`, `x.clock_instance`,
+`x.clock_instance(c)`, `restore_clock_instance(...)`), `list` / `tuple` / `sorted` /
+`reversed` / `iter` of one, or a local name bound to any of these. Comparing a whole
+scope, storing, serializing or logging it, and passing it to
+`restore_clock_instance` are not reads, and neither is `list(scope)` alone. The rule
+holds in UPSTREAM modules too: registration has the binding, so it has no use for a
+scope's elements. Only SCOPE_OWNERS, which issue a scope or validate its shape, are out
+of it. It sees direct forms only: a scope behind another name for the key
+(`row[column]`), a return value, an attribute of another name, a container or `getattr`
+is not followed, and neither is `len(scope)`. The manifest comparison of ADR-021 does
+not depend on this rule; it keeps a reader from growing a dependence on the elements.
+
 Every site must lie in an UPSTREAM module or be listed, by module and enclosing
 function with the reason it is allowed, in the table of its rule: LIFECYCLE or
 DOWNSTREAM for a dispatch site, IDENTITY for an identity comparison, ENVELOPE for a
@@ -77,7 +105,9 @@ It prints one line per violation and exits non-zero when there is any.
 from __future__ import annotations
 
 import ast
+import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -114,6 +144,40 @@ BINDING_IDENTITY = frozenset({"source_id", "robot_run_id", "content_id", "unit_k
 
 DISPATCH = "dispatch"
 BINDING_TIME = "binding-time"
+SCOPE_OPACITY = "scope-opacity"
+
+_SCOPE_NAME = re.compile(r"(^|_)clock_scope$")
+INSTANCE_CLASSES = frozenset({"ClockInstance"})
+INSTANCE_FACTORIES = frozenset({"restore_clock_instance", "clock_instance"})
+# Whole-value conversions: what comes out is still the scope.
+SCOPE_CONVERSIONS = frozenset({"list", "tuple", "sorted", "reversed", "iter"})
+SCOPE_CONSUMERS = frozenset({"next", "enumerate", "zip", "map", "filter", "min", "max"})
+POLARS_LIST_READS = frozenset(
+    {
+        "get",
+        "first",
+        "last",
+        "slice",
+        "head",
+        "tail",
+        "contains",
+        "explode",
+        "gather",
+        "eval",
+        "to_struct",
+    }
+)
+_SQL_SCOPE_READ = re.compile(
+    r"\b\w*clock_scope\s*\[|\b(?:list_extract|list_element|array_extract|unnest)\s*\(\s*\w*clock_scope",
+    re.IGNORECASE,
+)
+
+# Modules that issue a scope or validate its shape: the only ones that may read its
+# elements. A consumer that believes it needs one should compare whole instances.
+SCOPE_OWNERS: dict[str, str] = {
+    "packages/sceneops-core/sceneops_core/temporal/": "restores an instance and validates a scope's structural shape",
+    "packages/sceneops-core/sceneops_core/provenance/sources.py": "a source binding issues the OriginScope of its unit",
+}
 
 # Module path prefixes of source-aware lifecycle code: they define, produce, register
 # or persist a source binding, so they dispatch by source by design.
@@ -291,10 +355,16 @@ def _own_nodes(scope: ast.AST) -> list[ast.AST]:
     return found
 
 
-def _aliases(scope: ast.AST, inherited: frozenset[str]) -> frozenset[str]:
-    """Names bound to a binding in ``scope``: parameters annotated with a binding
-    class, and plain names assigned a binding (to a fixed point, so an alias of an
-    alias counts), on top of the enclosing function's."""
+def _aliases(
+    scope: ast.AST,
+    inherited: frozenset[str],
+    is_value: Callable[[ast.AST, frozenset[str]], bool] = _is_binding,
+    annotates: Callable[[ast.AST | None], bool] = _annotates_binding,
+) -> frozenset[str]:
+    """Names bound to a value in ``scope`` (a binding, by default): parameters with
+    an annotation ``annotates`` accepts, and plain names assigned a value ``is_value``
+    accepts (to a fixed point, so an alias of an alias counts), on top of the enclosing
+    function's."""
     aliases = set(inherited)
     nodes = _own_nodes(scope)
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -305,22 +375,21 @@ def _aliases(scope: ast.AST, inherited: frozenset[str]) -> frozenset[str]:
             *arguments.kwonlyargs,
             *filter(None, (arguments.vararg, arguments.kwarg)),
         ):
-            if _annotates_binding(arg.annotation):
+            if annotates(arg.annotation):
                 aliases.add(arg.arg)
     while True:
         found = set(aliases)
         for node in nodes:
-            if isinstance(node, ast.Assign) and _is_binding(
+            if isinstance(node, ast.Assign) and is_value(
                 node.value, frozenset(aliases)
             ):
                 found.update(t.id for t in node.targets if isinstance(t, ast.Name))
             elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                if _annotates_binding(node.annotation) or (
-                    node.value is not None
-                    and _is_binding(node.value, frozenset(aliases))
+                if annotates(node.annotation) or (
+                    node.value is not None and is_value(node.value, frozenset(aliases))
                 ):
                     found.add(node.target.id)
-            elif isinstance(node, ast.NamedExpr) and _is_binding(
+            elif isinstance(node, ast.NamedExpr) and is_value(
                 node.value, frozenset(aliases)
             ):
                 found.add(node.target.id)
@@ -360,17 +429,150 @@ def _binding_time(node: ast.AST, aliases: frozenset[str]) -> str | None:
     return None
 
 
+def _annotates_instance(annotation: ast.AST | None) -> bool:
+    if annotation is None:
+        return False
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            annotation = ast.parse(annotation.value, mode="eval")
+        except SyntaxError:
+            return False
+    return bool(_names(annotation) & INSTANCE_CLASSES)
+
+
+def _called_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _is_instance(node: ast.AST, instances: frozenset[str]) -> bool:
+    if isinstance(node, ast.NamedExpr):
+        return _is_instance(node.value, instances)
+    if isinstance(node, ast.Call):
+        return _called_name(node) in INSTANCE_FACTORIES
+    if isinstance(node, ast.Attribute):
+        return node.attr == "clock_instance"
+    if isinstance(node, ast.Name):
+        return (
+            node.id in instances or node.id == "instance" or node.id.endswith("_instance")
+        )
+    return False
+
+
+def _names_scope(value: object) -> bool:
+    return isinstance(value, str) and bool(_SCOPE_NAME.search(value))
+
+
+def _is_scope(
+    node: ast.AST, scopes: frozenset[str], instances: frozenset[str]
+) -> bool:
+    if isinstance(node, ast.NamedExpr):
+        return _is_scope(node.value, scopes, instances)
+    if isinstance(node, ast.Name):
+        return node.id in scopes or _names_scope(node.id)
+    if isinstance(node, ast.Attribute):
+        return _names_scope(node.attr) or (
+            node.attr == "scope" and _is_instance(node.value, instances)
+        )
+    if isinstance(node, ast.Subscript):
+        return isinstance(node.slice, ast.Constant) and _names_scope(node.slice.value)
+    if isinstance(node, ast.Call):
+        name = _called_name(node)
+        if name in SCOPE_CONVERSIONS and isinstance(node.func, ast.Name):
+            return bool(node.args) and _is_scope(node.args[0], scopes, instances)
+        if name == "get" and node.args and isinstance(node.args[0], ast.Constant):
+            return _names_scope(node.args[0].value)
+    return False
+
+
+def _polars_list_read(node: ast.AST) -> str | None:
+    """``col("clock_scope").list.<read>(...)``."""
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in POLARS_LIST_READS
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "list"
+    ):
+        return None
+    column = node.func.value.value
+    if (
+        isinstance(column, ast.Call)
+        and _called_name(column) == "col"
+        and column.args
+        and isinstance(column.args[0], ast.Constant)
+        and _names_scope(column.args[0].value)
+    ):
+        return f".list.{node.func.attr} of a clock scope column"
+    return None
+
+
+def _scope_read(
+    node: ast.AST, scopes: frozenset[str], instances: frozenset[str]
+) -> str | None:
+    def scope(value: ast.AST) -> bool:
+        return _is_scope(value, scopes, instances)
+
+    def unpacks(target: ast.AST) -> bool:
+        return isinstance(target, (ast.Tuple, ast.List))
+
+    if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+        return "subscripts a clock scope" if scope(node.value) else None
+    if isinstance(node, ast.Assign) and scope(node.value):
+        return "unpacks a clock scope" if any(map(unpacks, node.targets)) else None
+    if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+        return "iterates a clock scope" if scope(node.iter) else None
+    if isinstance(node, ast.Starred) and isinstance(node.ctx, ast.Load):
+        return "spreads a clock scope" if scope(node.value) else None
+    if isinstance(node, ast.Compare):
+        for op, right in zip(node.ops, node.comparators):
+            if isinstance(op, (ast.In, ast.NotIn)) and scope(right):
+                return "tests membership in a clock scope"
+        return None
+    if isinstance(node, ast.Match) and scope(node.subject):
+        sequence = any(
+            isinstance(n, (ast.MatchSequence, ast.MatchStar))
+            for case in node.cases
+            for n in ast.walk(case.pattern)
+        )
+        return "matches a sequence pattern on a clock scope" if sequence else None
+    if isinstance(node, ast.Call):
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id in SCOPE_CONSUMERS
+            and any(scope(a) for a in node.args)
+        ):
+            return f"passes a clock scope to {node.func.id}"
+        return _polars_list_read(node)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        if _SQL_SCOPE_READ.search(node.value):
+            return "reads an element of a clock scope in SQL"
+    return None
+
+
 def sites(path: Path, module: str) -> list[Site]:
     found: list[Site] = []
 
-    def visit(node: ast.AST, scope: tuple[str, ...], aliases: frozenset[str]) -> None:
+    def visit(
+        node: ast.AST,
+        scope: tuple[str, ...],
+        aliases: frozenset[str],
+        instances: frozenset[str],
+        scopes: frozenset[str],
+    ) -> None:
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            return  # A docstring states, it does not read.
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             scope = (*scope, node.name)
             aliases = _aliases(node, aliases)
+            instances, scopes = _scope_aliases(node, instances, scopes)
         elif isinstance(node, ast.ClassDef):
             # A method does not see names bound in its class body.
             scope = (*scope, node.name)
-            aliases = frozenset()
+            aliases = instances = scopes = frozenset()
         function = ".".join(scope) or "<module>"
         what = _dispatch(node) or _binding_identity(node, aliases)
         if what is not None:
@@ -379,12 +581,31 @@ def sites(path: Path, module: str) -> list[Site]:
         what = _binding_time(node, aliases)
         if what is not None:
             found.append(Site(module, function, node.lineno, what, BINDING_TIME))
+        what = _scope_read(node, scopes, instances)
+        if what is not None:
+            # A comprehension clause has no position of its own.
+            line = (
+                node.iter.lineno if isinstance(node, ast.comprehension) else node.lineno
+            )
+            found.append(Site(module, function, line, what, SCOPE_OPACITY))
         for child in ast.iter_child_nodes(node):
-            visit(child, scope, aliases)
+            visit(child, scope, aliases, instances, scopes)
 
     tree = ast.parse(path.read_text(), filename=str(path))
-    visit(tree, (), _aliases(tree, frozenset()))
+    instances, scopes = _scope_aliases(tree, frozenset(), frozenset())
+    visit(tree, (), _aliases(tree, frozenset()), instances, scopes)
     return found
+
+
+def _scope_aliases(
+    node: ast.AST, instances: frozenset[str], scopes: frozenset[str]
+) -> tuple[frozenset[str], frozenset[str]]:
+    found = _aliases(node, instances, _is_instance, _annotates_instance)
+
+    def is_scope(value: ast.AST, aliases: frozenset[str]) -> bool:
+        return _is_scope(value, aliases, found)
+
+    return found, _aliases(node, scopes, is_scope, lambda _: False)
 
 
 def production_modules(root: Path) -> list[tuple[Path, str]]:
@@ -412,18 +633,29 @@ def check(
     identity: dict[tuple[str, str], str] | None = None,
     lifecycle: dict[tuple[str, str], str] | None = None,
     envelope: dict[tuple[str, str], str] | None = None,
+    scope_owners: dict[str, str] | None = None,
 ) -> list[str]:
     identity = IDENTITY if identity is None else identity
     lifecycle = LIFECYCLE if lifecycle is None else lifecycle
     envelope = ENVELOPE if envelope is None else envelope
+    scope_owners = SCOPE_OWNERS if scope_owners is None else scope_owners
     violations = []
     used: set[tuple[str, tuple[str, str]]] = set()
     for path, module in production_modules(root):
-        if any(module.startswith(prefix) for prefix in upstream):
-            continue
+        is_upstream = any(module.startswith(prefix) for prefix in upstream)
+        owns_scope = any(module.startswith(prefix) for prefix in scope_owners)
         for site in sites(path, module):
             key = (site.module, site.function)
             where = f"{site.module}:{site.line} ({site.function}): {site.what}"
+            if site.rule == SCOPE_OPACITY:
+                if not owns_scope:
+                    violations.append(
+                        f"{where}; a clock scope is opaque: compare whole instances "
+                        "(require_comparable), or carry the scope as one value"
+                    )
+                continue
+            if is_upstream:
+                continue
             if site.rule == BINDING_TIME:
                 if key in envelope:
                     used.add(("ENVELOPE", key))
@@ -478,7 +710,8 @@ def main() -> int:
         return 1
     print(
         f"source dispatch: ok ({len(production_modules(REPO_ROOT))} production "
-        "modules; source dispatch and binding time outside the listed sites: none)"
+        "modules; source dispatch, binding time and scope reads outside the listed "
+        "sites: none)"
     )
     return 0
 
