@@ -288,6 +288,93 @@ class TestSemanticsVersionChange:
         assert key("v1") != key("v2")
 
 
+def _legacy_execution_key(job: JobManifest) -> str:
+    """The key this request had before the transform stated the output schema:
+    the same normalized params without it."""
+    from sceneops_core.executions import (
+        compute_execution_key,
+        params_for_execution_key,
+    )
+
+    params = params_for_execution_key(JobType.ALIGN_EPISODE, job.params)
+    del params["aligned_artifact_schema_version"]
+    return compute_execution_key(
+        kind="job",
+        type=JobType.ALIGN_EPISODE.value,
+        dataset_id=job.dataset_id,
+        dataset_version=job.dataset_version,
+        params=params,
+    )
+
+
+class TestArtifactSchemaUpgrade:
+    """A Job that succeeded under an earlier output schema has a result that
+    names artifacts today's readers refuse; it is not the result of a request
+    for the current schema."""
+
+    @pytest.mark.asyncio
+    async def test_a_succeeded_old_schema_job_is_not_returned(self) -> None:
+        service, jobs, artifacts = _service()
+        artifacts.add(artifact_id="art-A", checksum="sha256:" + "a" * 64)
+        probe = await service.create_job(_request())
+        jobs.jobs.clear()
+
+        legacy_key = _legacy_execution_key(probe)
+        assert legacy_key != probe.execution_key
+        old = probe.model_copy(
+            update={
+                "job_id": "job-old-schema",
+                "status": JobStatus.SUCCEEDED,
+                "execution_key": legacy_key,
+            }
+        )
+        jobs.jobs[old.job_id] = old
+
+        job = await service.create_job(_request())
+
+        assert job.job_id != old.job_id
+        assert job.status == JobStatus.PENDING
+        assert job.execution_key == probe.execution_key
+
+    @pytest.mark.asyncio
+    async def test_control_a_succeeded_current_schema_job_is_returned(self) -> None:
+        service, jobs, artifacts = _service()
+        artifacts.add(artifact_id="art-A", checksum="sha256:" + "a" * 64)
+        first = await service.create_job(_request())
+        first.status = JobStatus.SUCCEEDED
+
+        again = await service.create_job(_request())
+
+        assert again.job_id == first.job_id
+        assert again.execution_key == first.execution_key
+        assert len(jobs.jobs) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_later_schema_upgrade_also_starts_a_new_job(
+        self, monkeypatch
+    ) -> None:
+        service, jobs, artifacts = _service()
+        artifacts.add(artifact_id="art-A", checksum="sha256:" + "a" * 64)
+        first = await service.create_job(_request())
+        first.status = JobStatus.SUCCEEDED
+
+        monkeypatch.setattr(
+            "sceneops_core.executions.key.ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION",
+            "v99",
+        )
+        upgraded = await service.create_job(_request())
+
+        assert upgraded.job_id != first.job_id
+        assert upgraded.execution_key != first.execution_key
+
+    @pytest.mark.asyncio
+    async def test_the_stored_params_stay_the_request_params(self) -> None:
+        service, _, artifacts = _service()
+        artifacts.add(artifact_id="art-A", checksum="sha256:" + "a" * 64)
+        job = await service.create_job(_request())
+        assert "aligned_artifact_schema_version" not in job.params
+
+
 class TestPinnedRevision:
     """SceneOps V2 Request 2.3A §7/§23."""
 
@@ -412,6 +499,20 @@ class TestUnrelatedJobTypeRegression:
             params=params,
         )
         assert key == direct_key
+
+    def test_only_jobs_that_read_or_write_the_artifact_state_its_schema(self) -> None:
+        from sceneops_core.executions import params_for_execution_key
+
+        stating = {
+            JobType.ALIGN_EPISODE,
+            JobType.VALIDATE_ALIGNED_EPISODE,
+            JobType.PROFILE_ALIGNED_EPISODE,
+        }
+        for job_type in JobType:
+            params = params_for_execution_key(job_type, {"episode_id": EPISODE_ID})
+            assert ("aligned_artifact_schema_version" in params) == (
+                job_type in stating
+            )
 
 
 class TestAcceptanceTable:

@@ -5,10 +5,14 @@ import json
 from typing import Any, Callable
 
 from sceneops_core.episodes.alignment import (
+    ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION,
     ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION,
     ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION,
 )
+from sceneops_core.episodes.curation.semantics import CURATION_SEMANTICS_VERSION
+from sceneops_core.episodes.learning_export import LEARNING_DATA_SCHEMA_VERSION
 from sceneops_core.jobs.schemas.enums import JobType
+from sceneops_core.scenes.analytics import SCENE_ANALYTICS_SCHEMA_VERSION
 
 
 def _exclude_keys(*excluded: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
@@ -35,7 +39,12 @@ def _align_episode_transform(params: dict[str, Any]) -> dict[str, Any]:
     Episode's lineage-only ``source_artifact_id`` is stripped (the pinned
     ``source_manifest_sha256`` is the content identity, same reasoning as
     _exclude_keys above) and the Episodes are sorted so two calls pinning
-    the same set in a different order dedup to one execution."""
+    the same set in a different order dedup to one execution.
+
+    Also injects the schema version of the artifact the Job writes. It is no
+    job input, so without it a Job that succeeded under an earlier schema
+    would be returned as the result of a request for the current one, and its
+    result names artifacts today's readers refuse."""
 
     episodes = params.get("episodes")
     transformed = dict(params)
@@ -52,7 +61,35 @@ def _align_episode_transform(params: dict[str, Any]) -> dict[str, Any]:
             )
         )
         transformed["episodes"] = stripped
+    transformed["aligned_artifact_schema_version"] = (
+        ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION
+    )
     return transformed
+
+
+def _aligned_analysis_transform(
+    *, semantics_key: str, semantics_version: str
+) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """VALIDATE_ALIGNED_EPISODE / PROFILE_ALIGNED_EPISODE: the lineage-only
+    ``aligned_artifact_id`` is stripped (see _exclude_keys), and two contracts
+    that are no job input are injected, read from the real constants.
+
+    The result of either Job is a statement about the aligned artifact as a
+    reader of a given schema and a given analysis read it. Without the schema
+    version, a request after an upgrade would be answered by a Job that
+    succeeded before it, ``valid: true`` included, for an artifact today's
+    reader refuses."""
+
+    strip_lineage = _exclude_keys("aligned_artifact_id")
+
+    def transform(params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **strip_lineage(params),
+            "aligned_artifact_schema_version": ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION,
+            semantics_key: semantics_version,
+        }
+
+    return transform
 
 
 def _export_learning_data_transform(params: dict[str, Any]) -> dict[str, Any]:
@@ -64,6 +101,14 @@ def _export_learning_data_transform(params: dict[str, Any]) -> dict[str, Any]:
     same set of aligned revisions in a different order still dedup to one
     execution. ``tables`` is also sorted for the same order-independence
     reason, when present.
+
+    Also injects the schema version of the tables the Job writes, which is what
+    ``learning_data_export_id`` already keys on: without it a Job that succeeded
+    under an earlier schema would be returned, and its result names an export
+    today's readers refuse. The aligned artifact schema is deliberately not
+    injected. Inputs are pinned by content, and a finished export does not need
+    its inputs to stay readable: it is complete and current as long as its own
+    schema is, so a later aligned schema alone must not repeat it.
     """
 
     inputs = params.get("inputs")
@@ -83,7 +128,21 @@ def _export_learning_data_transform(params: dict[str, Any]) -> dict[str, Any]:
     tables = params.get("tables")
     if isinstance(tables, list):
         transformed["tables"] = sorted(tables)
+    transformed["learning_data_schema_version"] = LEARNING_DATA_SCHEMA_VERSION
     return transformed
+
+
+def _export_analytics_snapshot_transform(params: dict[str, Any]) -> dict[str, Any]:
+    """EXPORT_ANALYTICS_SNAPSHOT's result names tables of one schema, and the schema
+    is no job input: without it a Job that succeeded under an earlier schema would
+    be returned, and its result names tables today's readers refuse. The canonical
+    manifest schema is deliberately not injected: the DatasetVersion pins its
+    revisions by content."""
+
+    return {
+        **params,
+        "scene_analytics_schema_version": SCENE_ANALYTICS_SCHEMA_VERSION,
+    }
 
 
 def _curate_episodes_transform(params: dict[str, Any]) -> dict[str, Any]:
@@ -109,6 +168,16 @@ def _curate_episodes_transform(params: dict[str, Any]) -> dict[str, Any]:
     (not duplicated as literals) specifically because drift between the
     literal here and the actual installed version is exactly the class of
     bug this request closes.
+
+    The learning data schema and the curation semantics version are injected
+    for the same reason: the handler reads the pinned export under today's
+    schema and decides under today's semantics, and ``episode_curation_id``
+    already keys on the semantics. Without the schema a Job that succeeded
+    earlier would be returned for an export today's reader refuses. The aligned
+    artifact schema is deliberately not injected, as for EXPORT_LEARNING_DATA:
+    an export of the current schema names only artifacts of that schema, and
+    a selection over it stays true of what it pins when a later aligned schema
+    arrives.
     """
     transformed = {
         k: v
@@ -132,6 +201,8 @@ def _curate_episodes_transform(params: dict[str, Any]) -> dict[str, Any]:
         ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION
     )
     transformed["profile_semantics_version"] = ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION
+    transformed["curation_semantics_version"] = CURATION_SEMANTICS_VERSION
+    transformed["learning_data_schema_version"] = LEARNING_DATA_SCHEMA_VERSION
     return transformed
 
 
@@ -145,9 +216,16 @@ _EXECUTION_KEY_PARAM_TRANSFORMS: dict[
     JobType, Callable[[dict[str, Any]], dict[str, Any]]
 ] = {
     JobType.ALIGN_EPISODE: _align_episode_transform,
-    JobType.VALIDATE_ALIGNED_EPISODE: _exclude_keys("aligned_artifact_id"),
-    JobType.PROFILE_ALIGNED_EPISODE: _exclude_keys("aligned_artifact_id"),
+    JobType.VALIDATE_ALIGNED_EPISODE: _aligned_analysis_transform(
+        semantics_key="validation_semantics_version",
+        semantics_version=ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION,
+    ),
+    JobType.PROFILE_ALIGNED_EPISODE: _aligned_analysis_transform(
+        semantics_key="profile_semantics_version",
+        semantics_version=ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION,
+    ),
     JobType.EXPORT_LEARNING_DATA: _export_learning_data_transform,
+    JobType.EXPORT_ANALYTICS_SNAPSHOT: _export_analytics_snapshot_transform,
     JobType.CURATE_EPISODES: _curate_episodes_transform,
 }
 

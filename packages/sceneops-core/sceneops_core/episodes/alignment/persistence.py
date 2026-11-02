@@ -3,9 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 
+from pydantic import field_validator
+
 from sceneops_core.common.schemas import SceneOpsBaseModel
 
 from .config import TemporalAlignmentConfig, alignment_config_hash
+from .errors import UnsupportedAlignedArtifactSchemaError
 from .schemas import AlignedEpisode
 
 # This envelope's own JSON structure version -- distinct from
@@ -14,7 +17,8 @@ from .schemas import AlignedEpisode
 # §12). Bump this only when AlignedEpisodeArtifact's shape changes; bump
 # alignment_semantics_version only when the alignment algorithm's behavior
 # changes. The two are independent and must never be conflated.
-ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION = "v1"
+# v2: AlignedEpisode states its whole clock instance (clock_origin, clock_scope).
+ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION = "v2"
 
 
 class EpisodeSourceRevision(SceneOpsBaseModel):
@@ -51,20 +55,55 @@ class AlignedEpisodeArtifact(SceneOpsBaseModel):
     source_revision: EpisodeSourceRevision
     aligned_episode: AlignedEpisode
 
+    @field_validator("schema_version")
+    @classmethod
+    def _schema_version_is_supported(cls, value: str) -> str:
+        if value != ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION:
+            raise UnsupportedAlignedArtifactSchemaError(
+                _unsupported_schema_message(value)
+            )
+        return value
+
+
+def _unsupported_schema_message(version: object) -> str:
+    return (
+        f"aligned artifact schema version {version!r} is not supported: this "
+        f"reader requires {ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION!r}; align the "
+        "Episode again to get an artifact of that schema (ADR-018)"
+    )
+
+
+def load_aligned_episode_artifact(data: bytes) -> AlignedEpisodeArtifact:
+    """The persisted artifact behind ``data``. The stored document must state
+    the supported schema version itself: unlike a writer, which gets the
+    current version by construction, a reader never assumes one."""
+    document = json.loads(data)
+    version = document.get("schemaVersion") if isinstance(document, dict) else None
+    if version != ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION:
+        raise UnsupportedAlignedArtifactSchemaError(
+            _unsupported_schema_message(version)
+        )
+    return AlignedEpisodeArtifact.model_validate(document)
+
 
 def alignment_key(
     config: TemporalAlignmentConfig,
     alignment_semantics_version: str,
     source_clock: str,
+    *,
+    artifact_schema_version: str = ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION,
 ) -> str:
     """Deterministic, source-independent identity of one alignment *recipe*:
-    the full config, the algorithm's semantics version and the clock the
-    alignment ran on (ADR-007 §33.6).
+    the full config, the algorithm's semantics version, the clock the
+    alignment ran on (ADR-007 §33.6) and the schema of the artifact it writes.
 
     Every input that changes an AlignedEpisode's bytes participates. The
     clock is part of the recipe because the same config aligned on another
     clock is a different result; without it two such results would collide
-    on one key. Source content is deliberately excluded: the same recipe
+    on one key. So is the artifact schema: the same alignment in another
+    schema is other bytes, and a key is write-once, so a schema that kept the
+    key could never be written beside the objects of the one before it.
+    Source content is deliberately excluded: the same recipe
     maps to the same key across episodes and source revisions, which is
     what the aligned-artifact URI's two path segments (source hash, then
     this key) represent independently (SceneOps V2 Request 2.3 §14)."""
@@ -72,6 +111,7 @@ def alignment_key(
         {
             "alignment_config_hash": alignment_config_hash(config),
             "alignment_semantics_version": alignment_semantics_version,
+            "artifact_schema_version": artifact_schema_version,
             "source_clock": source_clock,
         },
         sort_keys=True,

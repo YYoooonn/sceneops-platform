@@ -22,23 +22,23 @@ same source for ``source``, the same unit for ``unit``. Two RobotRuns both on
 ``mcap_log_time`` are not comparable; neither are two Episodes of one
 content on a ``unit`` clock.
 
+What "the same source" and "the same unit" are is not a temporal decision:
+a unit's source binding asserts it as an ``OriginScope``, and the binding
+also says which origins its clocks may declare
+(``sceneops_core.provenance.sources``). Nothing here knows a source kind.
+
 A sampling rate is not a clock property: a frame rate says how one unit
 sampled its clock and is never declared here. Normalization changes the
 representation of a timestamp, never its domain: nothing adds an epoch to a
 relative time, shifts a clock or merges two clocks.
-
-Every recording clock has origin ``source`` (OQ-9). Capture's log time is a
-host clock and a header stamp's epoch is a property of the robot; the
-platform cannot verify either from the recording, so recording builders set
-the origin and no build configuration can change it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Annotated, Final
+from typing import Annotated
 
 from pydantic import (
     AfterValidator,
@@ -49,22 +49,16 @@ from pydantic import (
     StrictStr,
 )
 
-from sceneops_core.common.identifiers import validate_source_clock
-
-from .sources import SourceBinding
+from sceneops_core.common.identifiers import (
+    validate_source_clock,
+    validate_verbatim_key,
+)
 
 
 class ClockOrigin(StrEnum):
     UNIX_EPOCH = "unix_epoch"
     SOURCE = "source"
     UNIT = "unit"
-
-
-# OQ-9: the origin of every clock a recording source declares.
-RECORDING_CLOCK_ORIGIN: Final = ClockOrigin.SOURCE
-# Recording timestamps (MCAP log / publish time, ROS 2 header stamps,
-# integer-nanosecond payload fields) are native nanoseconds.
-RECORDING_CLOCK_RESOLUTION_NS: Final = 1
 
 
 class ClockDomainError(ValueError):
@@ -84,28 +78,82 @@ class ClockDomain(BaseModel):
 
 
 @dataclass(frozen=True)
+class OriginScope:
+    """The origin instances a unit's clocks resolve to, as the unit's source
+    binding asserts them: ``source`` is shared by every unit of one source,
+    ``unit`` by this unit alone. Both are opaque, non-empty keys; equal keys
+    mean one origin instance, so a key never names an origin instance it does
+    not own."""
+
+    source: tuple[str, ...]
+    unit: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        # An empty key would equal the unix_epoch instance's and make
+        # source- or unit-relative timestamps globally comparable.
+        if not self.source or not self.unit:
+            raise ValueError("origin scope keys must be non-empty")
+
+
+@dataclass(frozen=True)
 class ClockInstance:
     """One origin instance of a clock. Timestamps are comparable exactly
     when their instances are equal.
 
-    ``scope`` is ``()`` for ``unix_epoch``, ``(source_kind, source_id)`` for
-    ``source`` and ``(source_kind, source_id, unit_key)`` for ``unit``."""
+    ``scope`` is ``()`` for ``unix_epoch``, the unit's source key
+    (``OriginScope.source``) for ``source`` and its unit key
+    (``OriginScope.unit``) for ``unit``."""
 
     clock: str
     origin: ClockOrigin
     scope: tuple[str, ...]
 
 
-def clock_instance(domain: ClockDomain, source: SourceBinding) -> ClockInstance:
-    """The origin instance of ``domain`` as declared by a unit bound to
-    ``source``."""
+def clock_instance(domain: ClockDomain, scope: OriginScope) -> ClockInstance:
+    """The origin instance of ``domain`` as declared by a unit whose binding
+    asserts ``scope``."""
     if domain.origin == ClockOrigin.UNIX_EPOCH:
-        scope: tuple[str, ...] = ()
+        key: tuple[str, ...] = ()
     elif domain.origin == ClockOrigin.SOURCE:
-        scope = (source.source_kind, source.source_id)
+        key = scope.source
     else:
-        scope = (source.source_kind, source.source_id, source.unit_key)
-    return ClockInstance(clock=domain.clock, origin=domain.origin, scope=scope)
+        key = scope.unit
+    return ClockInstance(clock=domain.clock, origin=domain.origin, scope=key)
+
+
+def restore_clock_instance(
+    clock: str, origin: ClockOrigin | str, scope: Sequence[str]
+) -> ClockInstance:
+    """The origin instance a derived representation persisted as its triple
+    ``(clock, origin, scope)``, refused unless it has the shape an issued
+    instance has: a canonical clock id, a known origin, an ordered sequence of
+    unambiguous strings, empty exactly for ``unix_epoch``.
+
+    The check is structural. Scope elements stay opaque, so it neither reads
+    what they name nor establishes that the scope belongs to the unit the
+    representation describes; that takes the unit's canonical manifest, the
+    comparison tools/reference/temporal_lineage.py makes (ADR-021)."""
+    try:
+        validate_source_clock(clock)
+        resolved = ClockOrigin(origin)
+    except ValueError as exc:
+        raise ClockDomainError(str(exc)) from exc
+    if not isinstance(scope, (list, tuple)):
+        raise ClockDomainError(
+            f"clock scope must be an ordered sequence, got {type(scope).__name__}"
+        )
+    try:
+        for element in scope:
+            validate_verbatim_key(element, field="clock scope element")
+    except ValueError as exc:
+        raise ClockDomainError(str(exc)) from exc
+    if (resolved == ClockOrigin.UNIX_EPOCH) == bool(scope):
+        raise ClockDomainError(
+            f"a {resolved.value} clock instance "
+            f"{'has no scope' if resolved == ClockOrigin.UNIX_EPOCH else 'needs a scope'}, "
+            f"got {list(scope)}"
+        )
+    return ClockInstance(clock=clock, origin=resolved, scope=tuple(scope))
 
 
 def require_comparable(a: ClockInstance, b: ClockInstance) -> None:
@@ -118,24 +166,10 @@ def require_comparable(a: ClockInstance, b: ClockInstance) -> None:
         )
 
 
-def recording_clock_domains(clocks: Iterable[str]) -> list[ClockDomain]:
-    """The declarations of the recording clocks one unit uses, in canonical
-    order, as the recording builders set them: origin ``source`` (OQ-9) and
-    nanosecond resolution."""
-    return [
-        ClockDomain(
-            clock=clock,
-            origin=RECORDING_CLOCK_ORIGIN,
-            resolution_ns=RECORDING_CLOCK_RESOLUTION_NS,
-        )
-        for clock in sorted(set(clocks))
-    ]
-
-
 def check_clock_domains(
     domains: list[ClockDomain],
     *,
-    source: SourceBinding,
+    permitted_origins: Collection[ClockOrigin],
     referenced: Iterable[str],
     timestamps: Iterable[tuple[str, int]],
 ) -> None:
@@ -144,7 +178,8 @@ def check_clock_domains(
     - ``domains`` is sorted by clock id, and each clock is declared once;
     - every clock a structure references is declared, and every declared
       clock is referenced (by the window or by a timestamped structure);
-    - a recording source declares every clock with origin ``source``;
+    - every clock has one of ``permitted_origins``, which the unit's source
+      binding states;
     - every timestamp is a multiple of its clock's resolution.
     """
     clocks = [d.clock for d in domains]
@@ -161,13 +196,15 @@ def check_clock_domains(
     unused = sorted(set(declared) - used)
     if unused:
         raise ClockDomainError(f"clocks {unused} are declared but not used")
-    if source.source_kind == "recording":
-        wrong = sorted(d.clock for d in domains if d.origin != RECORDING_CLOCK_ORIGIN)
-        if wrong:
-            raise ClockDomainError(
-                f"a recording source declares every clock with origin "
-                f"{RECORDING_CLOCK_ORIGIN.value!r}; {wrong} do not"
-            )
+    wrong = sorted(d.clock for d in domains if d.origin not in permitted_origins)
+    if wrong:
+        allowed = " or ".join(
+            repr(o.value) for o in ClockOrigin if o in permitted_origins
+        )
+        raise ClockDomainError(
+            f"the unit's source declares every clock with origin {allowed}; "
+            f"{wrong} do not"
+        )
     for clock, timestamp_ns in timestamps:
         resolution = declared[clock].resolution_ns
         if timestamp_ns % resolution:
@@ -178,15 +215,14 @@ def check_clock_domains(
 
 
 __all__ = [
-    "RECORDING_CLOCK_ORIGIN",
-    "RECORDING_CLOCK_RESOLUTION_NS",
     "ClockDomain",
     "ClockDomainError",
     "ClockInstance",
     "ClockOrigin",
     "IncomparableClocksError",
+    "OriginScope",
     "check_clock_domains",
     "clock_instance",
-    "recording_clock_domains",
     "require_comparable",
+    "restore_clock_instance",
 ]

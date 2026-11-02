@@ -61,7 +61,6 @@ from sceneops_core.common.identifiers import (
     validate_open_identifier,
     validate_verbatim_key,
 )
-from sceneops_core.provenance import SourceTimestampNs
 from sceneops_core.scenes.schemas.manifests import (
     LocalId,
     QuaternionWXYZ,
@@ -69,6 +68,7 @@ from sceneops_core.scenes.schemas.manifests import (
     VerbatimKey,
     Vector3,
 )
+from sceneops_core.temporal import SourceTimestampNs
 
 LABEL_SET_SCHEMA_V2: Final = "sceneops.label_set/v2"
 

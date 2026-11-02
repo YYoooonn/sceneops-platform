@@ -40,6 +40,7 @@ from sceneops_core.episodes.alignment import (  # noqa: E402
 from sceneops_core.episodes.alignment.schemas import AlignedEpisode, LearningStep  # noqa: E402
 from sceneops_core.episodes.learning import FeatureProjection  # noqa: E402
 from sceneops_core.episodes.learning_export import (  # noqa: E402
+    LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
     LearningDataExportConfig,
     LearningDataExportManifest,
@@ -99,6 +100,8 @@ def _episode(episode_id: str, steps: list[LearningStep]) -> AlignedEpisode:
         source_start_timestamp_us=0,
         source_end_timestamp_us=(len(steps) - 1) * 1_000,
         source_clock="mcap_log_time",
+        clock_origin="source",
+        clock_scope=("test-source",),
         alignment_semantics_version=ALIGNMENT_SEMANTICS_VERSION,
         alignment_config=_CONFIG,
         target_frequency_hz=10.0,
@@ -155,6 +158,7 @@ async def _write_snapshot(tmp_path, artifact_store, *, entries):
         table_uris[name] = result.uri
 
     manifest = LearningDataExportManifest(
+        schema_version=LEARNING_DATA_SCHEMA_VERSION,
         export_id=export_id,
         dataset_id=DATASET_ID,
         dataset_version=DATASET_VERSION,

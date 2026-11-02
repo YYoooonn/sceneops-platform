@@ -67,6 +67,15 @@ builds registered ([Jobs and pipelines](./jobs-and-pipelines.md) §2).
 Every semantic decision is in the build configuration; its normalized form is
 the producer's `ProducerInfo.build_config` and part of the fingerprint.
 
+Stream roles (`EpisodeStreamRole`: observation | state | action | event |
+transition) and the field path rule (`FieldPath`: dotted identifiers, kept
+verbatim) are the Episode contract's own vocabulary, defined once in
+`sceneops_core.episodes.schemas` (`enums.py`, `fields.py`). The
+EpisodeManifest, the Episode records, alignment, profiling and validation use
+them directly; each build configuration and builder below consumes them and
+selects the roles its source can carry. The schema package imports no build
+configuration.
+
 ### 2.1 Recordings
 
 `RecordingEpisodeBuildConfig`

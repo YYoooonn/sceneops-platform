@@ -16,7 +16,20 @@ change (Request 2.1B §15).
 
 from __future__ import annotations
 
-from sceneops_core.episodes.alignment import TemporalAlignmentConfig, alignment_key
+import hashlib
+import json
+
+from sceneops_core.episodes.alignment import (
+    ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION,
+    ALIGNMENT_SEMANTICS_VERSION,
+    TemporalAlignmentConfig,
+    TemporalSourceContext,
+    align_episode,
+    aligned_episode_alignment_key,
+    alignment_config_hash,
+    alignment_key,
+)
+from sceneops_core.episodes.testing import DEFAULT_CLOCK, episode_manifest, state
 from sceneops_core.executions import compute_execution_key
 
 
@@ -135,3 +148,47 @@ class TestAlignmentKeyIdentity:
         key_for_episode_a = alignment_key(config, "v1", CLOCK)
         key_for_episode_b = alignment_key(config, "v1", CLOCK)
         assert key_for_episode_a == key_for_episode_b
+
+    def test_the_artifact_schema_version_is_part_of_the_recipe(self) -> None:
+        config = TemporalAlignmentConfig(target_frequency_hz=1.0)
+        assert alignment_key(config, "v3", CLOCK) == alignment_key(
+            config,
+            "v3",
+            CLOCK,
+            artifact_schema_version=ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION,
+        )
+        assert alignment_key(
+            config, "v3", CLOCK, artifact_schema_version="v2"
+        ) != alignment_key(config, "v3", CLOCK, artifact_schema_version="v99")
+
+    def test_the_key_differs_from_the_one_schema_v1_artifacts_were_written_at(
+        self,
+    ) -> None:
+        config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=500_000)
+        legacy_inputs = json.dumps(
+            {
+                "alignment_config_hash": alignment_config_hash(config),
+                "alignment_semantics_version": ALIGNMENT_SEMANTICS_VERSION,
+                "source_clock": CLOCK,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        legacy = hashlib.sha256(legacy_inputs.encode("utf-8")).hexdigest()
+        # What the code before the schema input computed for this recipe.
+        assert legacy == (
+            "7e182bcc7ef6e79ce03a66029d3f23e7f86a1dbbf9ec15746510de3ee12d5744"
+        )
+        assert alignment_key(config, ALIGNMENT_SEMANTICS_VERSION, CLOCK) != legacy
+
+    def test_a_reader_recomputes_the_key_the_writer_used(self) -> None:
+        config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=1)
+        aligned = align_episode(
+            episode_manifest([state("/odom", 0, x=0.0)], window=(0, 1)),
+            config,
+            TemporalSourceContext(source_clock=DEFAULT_CLOCK),
+            episode_id="ep-1",
+        )
+        assert aligned_episode_alignment_key(aligned) == alignment_key(
+            config, aligned.alignment_semantics_version, aligned.source_clock
+        )

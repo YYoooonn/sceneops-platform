@@ -90,12 +90,11 @@ from sceneops_core.common.identifiers import (
     validate_source_clock,
     validate_verbatim_key,
 )
-from sceneops_core.provenance import (
+from sceneops_core.provenance import ProducerInfo, SourceBinding
+from sceneops_core.temporal import (
     ClockDomain,
     ClockInstance,
     ClockOrigin,
-    ProducerInfo,
-    SourceBinding,
     SourceTimestampNs,
     check_clock_domains,
     clock_instance,
@@ -103,7 +102,8 @@ from sceneops_core.provenance import (
     frame_time_ns,
 )
 
-from ..recording_build import EpisodeStreamRole, FieldPath
+from .enums import EpisodeStreamRole
+from .fields import FieldPath
 
 EPISODE_MANIFEST_SCHEMA_V4: Final = "sceneops.episode_manifest/v4"
 
@@ -312,9 +312,15 @@ class EpisodeManifest(_ManifestModel):
                 _check_component_lengths(occurrence, stream)
         if not seen_ids:
             raise ValueError("an Episode holds at least one recorded occurrence")
+        self._check_clock_domains()
+        self._check_source_window()
+        self._check_frame_timeline()
+        return self
+
+    def _check_clock_domains(self) -> None:
         check_clock_domains(
             self.clock_domains,
-            source=self.lineage.source,
+            permitted_origins=self.lineage.source.permitted_clock_origins,
             referenced=[
                 self.lineage.source.source_clock,
                 *(s.source_clock for s in self.streams),
@@ -322,9 +328,6 @@ class EpisodeManifest(_ManifestModel):
             ],
             timestamps=self.clocked_timestamps(),
         )
-        self._check_source_window()
-        self._check_frame_timeline()
-        return self
 
     def _check_frame_timeline(self) -> None:
         """With a frame timeline: its clock is the window's and has origin
@@ -436,7 +439,9 @@ class EpisodeManifest(_ManifestModel):
     def clock_instance(self, clock: str) -> ClockInstance:
         """The origin instance of ``clock`` in this Episode: timestamps of two
         Episodes are comparable only when their instances are equal."""
-        return clock_instance(self.clock_domain(clock), self.lineage.source)
+        return clock_instance(
+            self.clock_domain(clock), self.lineage.source.origin_scope()
+        )
 
     def stream(self, topic: str) -> EpisodeStream:
         for stream in self.streams:

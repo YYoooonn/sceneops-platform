@@ -37,7 +37,7 @@ from pydantic import (
     model_validator,
 )
 
-from .recording_build import EpisodeStreamRole, FieldPath
+from .schemas import EpisodeStreamRole, FieldPath
 
 # The features that carry the frame grid, the unit, the native occurrence
 # reference and the task: represented by time, unit key, native_ref and task

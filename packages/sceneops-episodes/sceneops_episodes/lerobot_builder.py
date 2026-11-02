@@ -52,22 +52,17 @@ from sceneops_core.episodes.lerobot_build import (
     LeRobotEpisodeBuildConfig,
     LeRobotFeatureSelection,
 )
-from sceneops_core.episodes.recording_build import EpisodeStreamRole
 from sceneops_core.episodes.schemas import (
     EpisodeField,
     EpisodeLineage,
     EpisodeManifest,
     EpisodeOccurrence,
     EpisodeStream,
+    EpisodeStreamRole,
     FrameTimeline,
 )
-from sceneops_core.provenance import (
-    ClockDomain,
-    ClockOrigin,
-    PinnedContent,
-    ProducerInfo,
-    frame_time_ns,
-)
+from sceneops_core.provenance import PinnedContent, ProducerInfo
+from sceneops_core.temporal import ClockDomain, ClockOrigin, frame_time_ns
 from sceneops_sources.lerobot import (
     LeRobotContent,
     LeRobotEpisode,

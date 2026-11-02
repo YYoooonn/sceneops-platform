@@ -13,6 +13,19 @@ import pyarrow.parquet as pq
 from sceneops_core.common.checksums import checksum_hex
 from sceneops_storage import ArtifactStore, WrittenObject, write_once
 
+from .learning_tables import (
+    LEARNING_TABLE_SCHEMA_METADATA_KEY,
+    check_learning_table_frame,
+    learning_table_schema_stamp,
+    read_learning_table_bytes,
+)
+from .parquet_contract import TABLE_SCHEMA_METADATA_KEY
+from .tables import (
+    check_scene_table_frame,
+    read_scene_table_bytes,
+    scene_table_schema_stamp,
+)
+
 
 def _canonical_bytes(payload: dict[str, Any]) -> bytes:
     """Deterministic, compact JSON encoding, matching the convention used by
@@ -94,7 +107,16 @@ class AnalyticsTableWriter:
         dataset_id: str,
         dataset_version: str,
     ) -> AnalyticsTableWriteResult:
-        data = _parquet_bytes(df)
+        """One Scene analytics table, stating its schema in its footer. The stamp
+        is in the bytes the key names, so a table of another schema is always
+        another object."""
+        check_scene_table_frame(table_name, df)
+        buffer = io.BytesIO()
+        df.write_parquet(
+            buffer,
+            metadata={TABLE_SCHEMA_METADATA_KEY: scene_table_schema_stamp(table_name)},
+        )
+        data = buffer.getvalue()
         return await self._publish(
             self.table_uri(
                 dataset_id=dataset_id,
@@ -104,6 +126,11 @@ class AnalyticsTableWriter:
             ),
             data,
         )
+
+    async def read_table(self, table_name: str, uri: str) -> pl.DataFrame:
+        """A whole Scene analytics table, once its footer and rows are accepted."""
+        data = await self.artifact_store.read_bytes(uri)
+        return read_scene_table_bytes(data, table_name, uri=uri)
 
     def robot_run_table_uri(
         self, *, robot_run_id: str, table_name: str, checksum: str
@@ -173,7 +200,17 @@ class AnalyticsTableWriter:
             export_id=export_id,
             table_name=table_name,
         )
-        return await self._publish(uri, _parquet_bytes(df))
+        check_learning_table_frame(table_name, df)
+        buffer = io.BytesIO()
+        df.write_parquet(
+            buffer,
+            metadata={
+                LEARNING_TABLE_SCHEMA_METADATA_KEY: learning_table_schema_stamp(
+                    table_name
+                )
+            },
+        )
+        return await self._publish(uri, buffer.getvalue())
 
     # ------------------------------------------------------------------
     # Sharded learning_steps/learning_signals objects (SceneOps V2 Request
@@ -229,7 +266,14 @@ class AnalyticsTableWriter:
             table_name=table_name,
             shard_index=shard_index,
         )
-        arrow_table = df.to_arrow()
+        check_learning_table_frame(table_name, df)
+        arrow_table = df.to_arrow().replace_schema_metadata(
+            {
+                LEARNING_TABLE_SCHEMA_METADATA_KEY: learning_table_schema_stamp(
+                    table_name
+                )
+            }
+        )
         sink = pa.BufferOutputStream()
         # zstd level 3, matching Polars' write_parquet default exactly
         # (used by every other write path in this module) -- PyArrow's own
@@ -289,16 +333,17 @@ class AnalyticsTableWriter:
             return None
         return await self.artifact_store.read_bytes(uri)
 
-    async def read_learning_table(self, uri: str) -> pl.DataFrame:
-        """Read a whole single-file learning table back into a DataFrame --
-        used only for ``learning_episodes`` (always small, metadata-scale;
-        SceneOps V2 Request 5.5 §3's incremental-export path reads a base
-        export's existing ``learning_episodes`` table this way to merge it
-        with a delta). Never used for sharded learning_steps/learning_signals
-        tables -- those are read selectively (see parquet_range_reader.py),
-        never materialized whole."""
+    async def read_learning_table(self, table_name: str, uri: str) -> pl.DataFrame:
+        """Read a whole single-file learning table back into a DataFrame, once
+        its footer has been accepted -- used only for ``learning_episodes``
+        (always small, metadata-scale; SceneOps V2 Request 5.5 §3's
+        incremental-export path reads a base export's existing
+        ``learning_episodes`` table this way to merge it with a delta). Never
+        used for sharded learning_steps/learning_signals tables -- those are
+        read selectively (see parquet_range_reader.py), never materialized
+        whole."""
         data = await self.artifact_store.read_bytes(uri)
-        return pl.read_parquet(io.BytesIO(data))
+        return read_learning_table_bytes(data, table_name, uri=uri)
 
     # ------------------------------------------------------------------
     # Episode curation manifests (SceneOps V2 Request 2.6)

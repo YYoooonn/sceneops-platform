@@ -145,10 +145,13 @@ native reader or content builder, and no format has both. Current builder bounds
   A recording pipeline composes only the revisions of its own single RobotRun and
   domain; a version of several RobotRuns or of both domains is a standalone
   composition. Registered units and revisions are never changed or removed.
-- Validation and profiling address revisions by pin. Alignment and everything derived
-  from it (aligned-episode keys, learning exports, curation) are scoped to the
-  DatasetVersion they were produced for: an aligned revision of the same Episode
-  revision is written again under each DatasetVersion that aligns it.
+- Validation and profiling address revisions by pin. An aligned artifact and its reports
+  belong to the source revision and the recipe, and every DatasetVersion pinning that revision
+  shares them; a request naming a version that does not is refused
+  ([ADR-022](../adr/022-aligned-artifact-identity.md)). Learning exports and curation are
+  owned by the DatasetVersion they were produced for. An alignment that crashes between
+  its write and its commit leaves an object with no record, which the next attempt adopts;
+  nothing removes it if no attempt comes.
 - A composition selector selects by source (a RobotRun or a SourceContent) and
   producer fingerprint only. A composition is one PostgreSQL transaction, whose commit-time membership check counts
   each version's members once; the largest composition tested has a handful of
@@ -160,6 +163,11 @@ native reader or content builder, and no format has both. Current builder bounds
   ([Ingress boundaries](./ingress-boundaries.md) §4.1). Consumers keep comparing clocks
   by id within one manifest; the origin instance is checked only through
   `require_comparable`, which no workflow calls yet.
+- The declared window and the clock-origin authority are carried by the source binding
+  (`lineage.source`), and consumers reach them through `declared_window()` /
+  `clock_instance()`. The static check that keeps source dispatch and binding reads
+  out of canonical processing sees direct forms and local aliases only
+  ([Ingress boundaries](./ingress-boundaries.md) §8).
 - LeRobot content: only `codebase_version` v3.0 is read (v2.x is refused at build
   time, though such a snapshot is still preserved and registered). One data file and
   one task per episode are what the pinned pusht dataset exercises; multi-file and
@@ -195,8 +203,20 @@ native reader or content builder, and no format has both. Current builder bounds
   [Derived layer](./derived-layer.md) §7.
 - `export_analytics_snapshot` covers Scene tables only. Observations are exported by
   payload reference (`payload_uri`, integrity, media type, `payload_selector`) for every
-  source; the analytical tables carry no schema version of their own. Aligned Episodes
-  have their own learning export.
+  source. Aligned Episodes have their own learning export.
+- Scene analytics tables state a whole clock instance per declared timestamp and their
+  schema in the footer ([ADR-020](../adr/020-scene-analytics-schema-v2.md)). That protects the
+  supported readers (`read_scene_table_bytes`, `AnalyticsTableWriter.read_table`,
+  `query_scene_analytics`). A Parquet file read directly is not checked, and SQL compares only what
+  it names: a join on clock id and timestamp alone still matches unrelated clocks, so a join states
+  the whole instance ([Storage layout](./storage-layout.md)). Tables of schema `v1` stay in place and
+  are refused.
+- `robot_telemetry` and `missions`, and the `robot_states` and `missions` tables they project, are
+  outside the temporal contract. `robot_telemetry.timestamp_us` is `message.log_time` and states no
+  clock, `missions.started_at` / `ended_at` take that log time for UTC, and neither table is stamped or
+  verified. Rows of one RobotRun are comparable with each other; a join across RobotRuns on
+  `timestamp_us`, or with a Scene or Episode timestamp, has no basis
+  ([ADR-021](../adr/021-cross-artifact-temporal-integrity.md)).
 - Native label import exists for nuScenes only (validated on the `scene-0061` slice);
   visibility, point counts and annotation prev / next links are not carried. An anchor
   carries no unit key, so a unit-origin clock cannot be labelled. Detection lifts
@@ -209,13 +229,37 @@ native reader or content builder, and no format has both. Current builder bounds
 - LeRobot is the only external export format; no integration-run record is
   persisted ([Dataset interoperability](./dataset-interoperability.md) §10,
   [External integration runtime](./external-integration-runtime.md) §4).
+- Aligned artifacts and the `learning_episodes` table state their clock instance
+  ([ADR-018](../adr/018-aligned-episode-temporal-context.md),
+  [ADR-019](../adr/019-learning-data-schema-v2-and-contract-aware-jobs.md)). Learning steps and
+  signals reach it only through `SceneOpsDataset`, so a shard read alone has no temporal
+  interpretation.
+- A reader proves that a persisted clock instance is well formed, not that it is the unit's own. That
+  takes the pinned canonical manifest and is done by a dedicated verifier
+  ([ADR-021](../adr/021-cross-artifact-temporal-integrity.md), `make reference-verify-temporal`), which
+  no Job or read path runs on its own, so a wrong scope reaching a normal read is not refused there. It
+  holds the aligned artifacts, learning exports and Scene analytics tables it is named, and does not
+  discover what a DatasetVersion was exported to.
+- `make check-boundaries` rejects direct reads of a clock scope's elements. It does not follow a scope
+  through a return value, an attribute of another name, a container, `getattr` or a computed row key, and
+  it does not see `len(scope)`.
+- An aligned artifact of schema `v1` and a learning export of schema `v1` are refused by every
+  reader, and stay in place. A v1 export is never an incremental base. A PipelineRun's key does
+  not see output schemas, so an unforced request identical to one that succeeded before a schema
+  changed returns that old run, whose outputs are then refused at their next read; `force: true`
+  produces a current run ([Jobs and pipelines](./jobs-and-pipelines.md)). VALIDATE, PROFILE, CURATE and
+  both EXPORT Jobs do see their contracts, so they are not affected, and no pipeline has an analytics
+  export or a curation task. `ALIGNMENT_SEMANTICS_VERSION` is not an input of the ALIGN_EPISODE
+  execution key.
 - Alignment refuses an Episode with a `transition` stream
   (`UnsupportedEpisodeContentError`), so a LeRobot Episode built with a `next.*`
   feature is not aligned or exported. Without one, alignment carries its video frames
   as reference values (Logical URI and `video_frame` selector; the learning export keeps
   the selector beside the URI) and decodes nothing; `ALIGN_EPISODE` is exercised on a
-  real pusht Episode built without `next.*` (`SUITE=lerobot-episodes`), the learning and
-  LeRobot exports have not been run on a LeRobot Episode. `frame_timeline`,
+  real pusht Episode built without `next.*` (`SUITE=lerobot-episodes`). No suite runs the
+  learning export on a LeRobot Episode (one acceptance run did, on two pusht Episodes:
+  [record](../history/aligned-episode-deployment-acceptance.md)), and the LeRobot export
+  has not been run on one. `frame_timeline`,
   `component_names` and `transition`
   streams have no consumer yet; an event view derived from a `transition` stream
   would need a declared rule (pusht's `next.done` is true on the last two frames of

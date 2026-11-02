@@ -21,6 +21,7 @@ from .errors import (
     InvalidAlignmentConfigError,
     InvalidEpisodeBoundsError,
     UnknownChannelError,
+    UnsupportedAlignedArtifactSchemaError,
     UnsupportedEpisodeContentError,
 )
 from .policies import (
@@ -36,6 +37,7 @@ from .persistence import (
     EpisodeSourceRevision,
     aligned_episode_alignment_key,
     alignment_key,
+    load_aligned_episode_artifact,
 )
 from .profiling import (
     ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION,
@@ -88,6 +90,7 @@ __all__ = [
     "Timeline",
     "TimelineMode",
     "UnknownChannelError",
+    "UnsupportedAlignedArtifactSchemaError",
     "UnsupportedEpisodeContentError",
     "align_episode",
     "alignment_samples",
@@ -98,6 +101,7 @@ __all__ = [
     "canonical_config_dict",
     "canonicalize_samples",
     "generate_fixed_frequency_timeline",
+    "load_aligned_episode_artifact",
     "group_frames_by_channel",
     "quantize_period_us",
     "resolve_channel_policy",

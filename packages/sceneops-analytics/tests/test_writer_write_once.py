@@ -8,8 +8,16 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from sceneops_analytics import AnalyticsTableWriter
+from sceneops_analytics import (
+    LEARNING_EPISODES_SCHEMA,
+    AnalyticsTableWriter,
+    SceneRevisionContent,
+    build_keyframes_table,
+)
 from sceneops_core.common.checksums import sha256_checksum
+from sceneops_core.provenance import manifest_artifact_id_for
+from sceneops_core.scenes.schemas import project_scene_revision, scene_id_for
+from sceneops_core.scenes.testing import build_scene_manifest, recording_source
 from sceneops_storage import LocalArtifactStore, WriteOnceConflictError
 
 
@@ -23,12 +31,31 @@ def writer(store, tmp_path):
     return AnalyticsTableWriter(artifact_store=store, root_uri=str(tmp_path / "a"))
 
 
+def _keyframes(*keyframe_timestamps_ns: int) -> pl.DataFrame:
+    manifest = build_scene_manifest(
+        source=recording_source(), keyframe_timestamps_ns=keyframe_timestamps_ns
+    )
+    checksum = manifest.checksum()
+    record = project_scene_revision(
+        manifest=manifest,
+        manifest_artifact_id=manifest_artifact_id_for(
+            unit_id=scene_id_for(manifest.lineage.source), manifest_checksum=checksum
+        ),
+        manifest_checksum=checksum,
+    )
+    return build_keyframes_table(
+        dataset_id="d",
+        dataset_version="v",
+        scenes=[SceneRevisionContent(record=record, manifest=manifest)],
+    )
+
+
 async def test_a_snapshot_table_result_pins_the_bytes_at_its_content_named_uri(
     writer, store
 ):
-    df = pl.DataFrame({"scene_id": ["s1", "s2"], "n": [1, 2]})
-
-    result = await writer.write_table("scenes", df, dataset_id="d", dataset_version="v")
+    result = await writer.write_table(
+        "keyframes", _keyframes(1_000), dataset_id="d", dataset_version="v"
+    )
 
     data = await store.read_bytes(result.uri)
     assert result.checksum == sha256_checksum(data)
@@ -37,10 +64,9 @@ async def test_a_snapshot_table_result_pins_the_bytes_at_its_content_named_uri(
 
 
 async def test_rebuilding_a_snapshot_from_the_same_data_converges(writer):
-    df = pl.DataFrame({"scene_id": ["s1", "s2"], "n": [1, 2]})
-
-    one = await writer.write_table("scenes", df, dataset_id="d", dataset_version="v")
-    two = await writer.write_table("scenes", df, dataset_id="d", dataset_version="v")
+    df = _keyframes(1_000)
+    one = await writer.write_table("keyframes", df, dataset_id="d", dataset_version="v")
+    two = await writer.write_table("keyframes", df, dataset_id="d", dataset_version="v")
 
     assert (two.uri, two.checksum) == (one.uri, one.checksum)
 
@@ -49,18 +75,12 @@ async def test_rebuilding_a_snapshot_from_changed_data_keeps_the_old_revision(
     writer, store
 ):
     one = await writer.write_table(
-        "scenes",
-        pl.DataFrame({"scene_id": ["s1"]}),
-        dataset_id="d",
-        dataset_version="v",
+        "keyframes", _keyframes(1_000), dataset_id="d", dataset_version="v"
     )
     old_bytes = await store.read_bytes(one.uri)
 
     two = await writer.write_table(
-        "scenes",
-        pl.DataFrame({"scene_id": ["s1", "s2"]}),
-        dataset_id="d",
-        dataset_version="v",
+        "keyframes", _keyframes(1_000, 2_000), dataset_id="d", dataset_version="v"
     )
 
     assert two.uri != one.uri
@@ -78,18 +98,24 @@ async def test_a_robot_run_table_is_a_content_named_revision_too(writer):
 
 
 async def test_an_export_id_never_names_two_different_tables(writer, store):
+    def table(*episode_ids: str) -> pl.DataFrame:
+        return pl.DataFrame(
+            [{"episode_id": episode_id} for episode_id in episode_ids],
+            schema=LEARNING_EPISODES_SCHEMA,
+        )
+
     kwargs = dict(dataset_id="d", dataset_version="v", export_id="e" * 64)
     first = await writer.write_learning_table(
-        "learning_episodes", pl.DataFrame({"x": [1]}), **kwargs
+        "learning_episodes", table("ep-1"), **kwargs
     )
     again = await writer.write_learning_table(
-        "learning_episodes", pl.DataFrame({"x": [1]}), **kwargs
+        "learning_episodes", table("ep-1"), **kwargs
     )
     assert again.checksum == first.checksum
 
     with pytest.raises(WriteOnceConflictError):
         await writer.write_learning_table(
-            "learning_episodes", pl.DataFrame({"x": [1, 2]}), **kwargs
+            "learning_episodes", table("ep-1", "ep-2"), **kwargs
         )
     assert sha256_checksum(await store.read_bytes(first.uri)) == first.checksum
 

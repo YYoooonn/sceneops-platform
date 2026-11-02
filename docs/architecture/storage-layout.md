@@ -150,9 +150,23 @@ Canonical EpisodeManifest revisions follow the same rule at
 {canonical_root}/episodes/{episode_id}/manifest-{sha256}.json
 ```
 
-(`EpisodeArtifactStore.publish_canonical_manifest`). Derived aligned-episode
-artifacts are keyed by the DatasetVersion they were aligned for, under
-`{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/aligned/`.
+(`EpisodeArtifactStore.publish_canonical_manifest`).
+
+Derived aligned-episode artifacts and their reports are functions of the source
+revision and the recipe, so they are keyed by those alone, and every DatasetVersion
+pinning the revision shares one object
+([ADR-022](../adr/022-aligned-artifact-identity.md)):
+
+```text
+{aligned_root}/{episode_id}/{source_sha256[:16]}/{alignment_key[:16]}.json
+{aligned_root}/{episode_id}/{source_sha256[:16]}/{alignment_key[:16]}.{validation|profile}-{sha256}.json
+```
+
+(`aligned_root` is `{ARTIFACT_ROOT_URI}/aligned_episodes`,
+`ArtifactSettings.aligned_episode_prefix`.) Each has an ArtifactRecord owned by the
+Episode with no DatasetVersion. A record states its own location: one written under
+`{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/aligned/` by an
+earlier deployment stays readable there and is reused rather than written again.
 
 Observation payloads are written write-once by both recording builders (Scene
 and Episode), through one shared store, at
@@ -201,17 +215,39 @@ changed data adds a revision beside the old one; nothing is overwritten.
 Each table is registered as an `ANALYTICS_TABLE` ArtifactRecord whose id
 derives from the table and that checksum.
 
+Each table states its schema in its Parquet footer: `sceneops.table_schema` =
+`scene_analytics/<version>/<table>`. The stamp is part of those bytes, so tables of two
+schemas are always two objects and two records, side by side, and old ones stay in place.
+Readers refuse anything but the current version's stamp and columns
+([ADR-020](../adr/020-scene-analytics-schema-v2.md)).
+
 Robot data is a separate scope from Dataset, so the same writer uses a
 second path scheme:
 `analytical/robot_runs/{robot_run_id}/{table_name}-{sha256}.parquet`
 (`robot_telemetry`/`missions`, written by `export_robot_analytics_snapshot`
 — see [Robot data ingestion](../workflows/robot-run-and-mcap.md) §4).
 
-The Parquet analytics layer is implemented and query-verified end to end —
-`sceneops_analytics.query_parquet()` runs real DuckDB SQL against local
-Parquet files (including cross-table joins). MinIO/S3-stored Parquet files
-can't be queried directly without DuckDB's httpfs/S3 extension (not wired
-up); the supported path downloads to local disk first, then queries.
+The Parquet analytics layer is implemented and query-verified end to end.
+`sceneops_analytics.query_scene_analytics()` proves local Scene tables, then runs
+DuckDB SQL over them; `query_parquet()` does the same for any other local Parquet file
+and refuses a Scene table. MinIO/S3-stored Parquet files can't be queried directly without
+DuckDB's httpfs/S3 extension (not wired up); the supported path downloads to local disk
+first, then queries.
+
+A SQL query compares what it names. Timestamps of two rows are comparable only on equal
+whole instances, so a join between Scenes states all of it:
+
+```sql
+SELECT a.observation_id, b.observation_id
+FROM observations a JOIN observations b
+  ON a.timestamp_ns = b.timestamp_ns
+ AND a.source_clock = b.source_clock
+ AND a.clock_origin = b.clock_origin
+ AND a.clock_scope  = b.clock_scope
+```
+
+Equal `source_clock` and `timestamp_ns` alone match unrelated RobotRuns. No clock is ever
+converted to make two instances comparable.
 
 `export_analytics_snapshot` only covers Scene-domain tables — Episode has
 no equivalent flat export. Aligned Episode revisions
@@ -246,7 +282,10 @@ still used by the frozen golden-fixture/regression path only; see
 `AnalyticsTableWriter.write_learning_table`/`write_learning_table_shard`/
 `write_learning_export_manifest`/`write_curation_manifest` — see
 [Robot learning data layer](./robot-learning-data.md) and
-[Scalable learning data](./scalable-learning-data.md).
+[Scalable learning data](./scalable-learning-data.md). Every learning table states its schema in
+its Parquet footer (`sceneops.table_schema`,
+[ADR-019](../adr/019-learning-data-schema-v2-and-contract-aware-jobs.md)), and because `export_id`
+hashes the schema version, a new schema writes beside the objects of an old one.
 
 ### Run outputs: reports, evaluation, predictions
 

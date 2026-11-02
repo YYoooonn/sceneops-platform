@@ -12,6 +12,10 @@
 # Nothing is hard-coded here: the runner supplies every disposable name through the
 # TEST_* variables after validating them, and a missing one fails the compose
 # interpolation instead of falling back to the reference database or bucket.
+#
+# The images default to the tags the reference stack runs. TEST_WORKER_IMAGE and
+# TEST_API_IMAGE name other images, so code that is not deployed can be tested on this
+# runtime without moving a tag a later `up` of the reference stack would pick up.
 # Services carry a `test-` prefix because the project joins the reference network
 # (to reach its PostgreSQL and MinIO) and service names are network aliases.
 #
@@ -28,7 +32,7 @@ x-test-settings: &test-settings
   SCENEOPS_WORKER_EXECUTION__CELERY__RESULT_BACKEND: redis://test-redis:6379/1
 
 x-test-worker: &test-worker
-  image: sceneops-platform/worker:local
+  image: ${TEST_WORKER_IMAGE:-sceneops-platform/worker:local}
   pull_policy: never
   env_file:
     - .env.local
@@ -53,7 +57,7 @@ services:
       retries: 15
 
   test-api:
-    image: sceneops-platform/api:local
+    image: ${TEST_API_IMAGE:-sceneops-platform/api:local}
     pull_policy: never
     env_file:
       - .env.local

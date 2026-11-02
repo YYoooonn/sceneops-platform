@@ -16,6 +16,7 @@ from sceneops_core.sources import content_id_for
 from sceneops_analytics.tables import (
     OBSERVATIONS_SCHEMA,
     TABLE_BUILDERS,
+    SceneRevisionContent,
     build_keyframes_table,
     build_observations_table,
     build_scenes_table,
@@ -40,8 +41,12 @@ def _revision(manifest):
     )
 
 
-def _scenes_table(records):
-    return build_scenes_table(dataset_id="d", dataset_version="v1", scenes=records)
+def _content(manifest) -> SceneRevisionContent:
+    return SceneRevisionContent(record=_revision(manifest), manifest=manifest)
+
+
+def _scenes_table(scenes):
+    return build_scenes_table(dataset_id="d", dataset_version="v1", scenes=scenes)
 
 
 def test_table_names():
@@ -51,12 +56,13 @@ def test_table_names():
 def test_build_scenes_table_row_per_scene():
     manifest = _manifest()
     record = _revision(manifest)
-    df = _scenes_table([record])
+    df = _scenes_table([_content(manifest)])
     assert df.height == 1
     row = df.row(0, named=True)
     assert (row["dataset_id"], row["dataset_version"]) == ("d", "v1")
     assert (row["robot_run_id"], row["unit_key"]) == ("run-001", "scene-a")
-    assert "source_kind" not in row and "external_format" not in row
+    assert row["source_kind"] == "recording" and row["content_id"] is None
+    assert "external_format" not in row
     assert row["manifest_artifact_id"] == record.manifest_artifact_id
     assert (row["observation_count"], row["keyframe_count"]) == (5, 2)
     assert row["observed_channels"] == ["CAM_FRONT", "LIDAR_TOP"]
@@ -68,7 +74,7 @@ def test_build_scenes_table_empty_is_empty_not_error():
 
 def test_observations_table_keeps_every_observation_with_its_own_time():
     df = build_observations_table(
-        dataset_id="d", dataset_version="v1", manifests=[("scene-1", _manifest())]
+        dataset_id="d", dataset_version="v1", scenes=[_content(_manifest())]
     )
     assert df.height == 5
     assert df["timestamp_ns"].to_list() == [1_007, 2_000, 3_007, 1_000, 3_000]
@@ -88,9 +94,9 @@ def test_every_timestamp_row_carries_its_own_clock():
     manifest = build_scene_manifest(
         camera_clock="camera.exposure_clock", keyframe_timestamps_ns=(1_000,)
     )
-    manifests = [("scene-1", manifest)]
+    scenes = [_content(manifest)]
     observations = build_observations_table(
-        dataset_id="d", dataset_version="v1", manifests=manifests
+        dataset_id="d", dataset_version="v1", scenes=scenes
     )
     clocks = dict(
         zip(observations["channel"].to_list(), observations["source_clock"].to_list())
@@ -99,16 +105,12 @@ def test_every_timestamp_row_carries_its_own_clock():
         "CAM_FRONT": "camera.exposure_clock",
         "LIDAR_TOP": "mcap_log_time",
     }
-    df = build_keyframes_table(
-        dataset_id="d", dataset_version="v1", manifests=manifests
-    )
+    df = build_keyframes_table(dataset_id="d", dataset_version="v1", scenes=scenes)
     assert df["source_clock"].to_list() == ["mcap_log_time"] * df.height
 
 
 def test_scenes_table_carries_the_segment_window():
-    manifest = _manifest()
-    record = _revision(manifest)
-    row = _scenes_table([record]).row(0, named=True)
+    row = _scenes_table([_content(_manifest())]).row(0, named=True)
     assert (
         row["window_clock"],
         row["window_start_timestamp_ns"],
@@ -117,9 +119,9 @@ def test_scenes_table_carries_the_segment_window():
 
 
 def test_keyframes_table_has_one_row_per_group_and_no_annotation_data():
-    manifests = [("scene-1", _manifest("a")), ("scene-2", _manifest("b"))]
+    scenes = [_content(_manifest("a")), _content(_manifest("b"))]
     keyframes = build_keyframes_table(
-        dataset_id="d", dataset_version="v1", manifests=manifests
+        dataset_id="d", dataset_version="v1", scenes=scenes
     )
     assert keyframes.height == 4
     assert not any("annotation" in column for column in keyframes.columns)
@@ -145,13 +147,14 @@ def test_every_source_exports_the_same_payload_columns():
             selector={"kind": "video_frame", "timestamp_ns": 33_333_333},
         )
     content = SceneManifest.model_validate(payload)
+    scene = _content(content)
     df = build_observations_table(
         dataset_id="ds",
         dataset_version="v1",
-        manifests=[("scene-1", content), ("scene-2", _manifest())],
+        scenes=[scene, _content(_manifest())],
     )
     assert df.columns == list(OBSERVATIONS_SCHEMA)
-    rows = df.filter(df["scene_id"] == "scene-1").to_dicts()
+    rows = df.filter(df["scene_id"] == scene.record.scene_id).to_dicts()
     assert [r["payload_uri"] for r in rows] == [
         o.payload.uri for o in content.observations
     ]

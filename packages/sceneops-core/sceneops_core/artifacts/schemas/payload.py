@@ -43,7 +43,7 @@ from sceneops_core.artifacts.media_types import (
     validate_media_type,
 )
 from sceneops_core.common.checksums import SHA256_CHECKSUM_PATTERN
-from sceneops_core.provenance.source_time import SourceTimestampNs
+from sceneops_core.temporal import SourceTimestampNs
 
 
 class VideoFrameSelector(BaseModel):

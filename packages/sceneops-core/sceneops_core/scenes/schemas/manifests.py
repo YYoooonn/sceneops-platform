@@ -85,11 +85,10 @@ from sceneops_core.common.identifiers import (
     validate_source_clock,
     validate_verbatim_key,
 )
-from sceneops_core.provenance import (
+from sceneops_core.provenance import ProducerInfo, SourceBinding
+from sceneops_core.temporal import (
     ClockDomain,
     ClockInstance,
-    ProducerInfo,
-    SourceBinding,
     SourceTimestampNs,
     check_clock_domains,
     clock_instance,
@@ -463,7 +462,7 @@ class SceneManifest(_ManifestModel):
     def _check_clock_domains(self) -> None:
         check_clock_domains(
             self.clock_domains,
-            source=self.lineage.source,
+            permitted_origins=self.lineage.source.permitted_clock_origins,
             referenced=[
                 self.lineage.source.source_clock,
                 *(c.source_clock for c in self.channels),
@@ -526,7 +525,9 @@ class SceneManifest(_ManifestModel):
     def clock_instance(self, clock: str) -> ClockInstance:
         """The origin instance of ``clock`` in this Scene: timestamps of two
         Scenes are comparable only when their instances are equal."""
-        return clock_instance(self.clock_domain(clock), self.lineage.source)
+        return clock_instance(
+            self.clock_domain(clock), self.lineage.source.origin_scope()
+        )
 
     def keyframes(self) -> list[SceneObservationGroup]:
         return [g for g in self.groups if g.kind == SceneGroupKind.KEYFRAME]

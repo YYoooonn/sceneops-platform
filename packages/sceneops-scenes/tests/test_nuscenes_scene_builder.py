@@ -17,7 +17,7 @@ import pytest
 
 from sceneops_core.artifacts.logical_uri import LogicalNamespace, format_logical_uri
 
-from sceneops_core.provenance import ClockOrigin, PinnedContent
+from sceneops_core.provenance import PinnedContent
 from sceneops_core.scenes.nuscenes_build import NuScenesSceneBuildConfig
 from sceneops_core.scenes.schemas import (
     SceneFrameRole,
@@ -27,6 +27,7 @@ from sceneops_core.scenes.schemas import (
     scene_id_for,
 )
 from sceneops_core.sources import SnapshotSelection
+from sceneops_core.temporal import ClockOrigin
 from sceneops_scenes.nuscenes_builder import (
     NUSCENES_CLOCK,
     NuScenesSceneBuildError,

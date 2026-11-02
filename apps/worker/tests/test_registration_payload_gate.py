@@ -128,7 +128,7 @@ class _World:
             episode_artifact_store=EpisodeArtifactStore(
                 artifact_store=self.store,
                 canonical_root_uri=f"{root}/canonical",
-                dataset_root_uri=f"{root}/datasets",
+                aligned_root_uri=f"{root}/aligned_episodes",
                 payload_root_uri=self.settings.observation_payload_root_uri,
             ),
             commit=done,

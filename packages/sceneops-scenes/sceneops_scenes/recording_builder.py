@@ -63,7 +63,6 @@ from pathlib import Path
 from typing import Any, Final
 
 from sceneops_core.provenance import (
-    INT64_MAX,
     PinnedRecording,
     ProducerInfo,
     recording_clock_domains,
@@ -98,6 +97,7 @@ from sceneops_core.scenes.schemas import (
     SceneObservation,
     ScenePose,
 )
+from sceneops_core.temporal import INT64_MAX
 from sceneops_recording import (
     RecordingMessage,
     Ros2Decoder,

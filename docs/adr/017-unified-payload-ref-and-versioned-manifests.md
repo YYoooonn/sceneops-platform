@@ -18,6 +18,13 @@ with legacy manifests and derived reference data is not kept; regenerable state 
 reset and rebuilt. See [R4 cutover](#r4-cutover). The sections on legacy reads,
 legacy normalization, the not-yet-admitting gate and migration describe the R3 state.
 
+**Amended (2026-11-01).** The statement that v5 / v4 schema validation never branches
+on the source kind is made exact and enforced; see the amendment at the end of
+[Validation boundaries](#validation-boundaries). The window and the comparability
+scope still live in `lineage.source`, as
+[Canonical data and the artifact envelope](#canonical-data-and-the-artifact-envelope)
+describes.
+
 ## Context
 
 [ADR-015](./015-multi-source-platform.md) §6.5 references payloads with a closed union
@@ -213,6 +220,25 @@ Remaining coupling, for a later refactoring outside R3/R4:
   (`require_alignable`) refuses every payload other than `ArtifactPayloadRef`. The
   analytics observation table already does. Because nothing registers a new-version
   manifest, none of them meets one in production.
+
+**Amendment (2026-11-01).** "For v5 / v4 it never branches on the source kind" was not
+exact when written: `check_clock_domains` admitted only origin `source` when
+`source_kind == "recording"`. That rule now belongs to the binding. Each binding
+declares its `permitted_clock_origins` and issues the `OriginScope` its clocks resolve
+to (`origin_scope()`), and `check_clock_domains` receives the permitted origins as an
+argument. So schema validation compares no source kind, while its outcome still
+depends on what the binding declares: a recording Scene that asserts origin
+`unix_epoch` is invalid, and a content Scene that does so is valid. Schema validation
+reads the binding only in the manifest envelope operations: the `declared_window()`
+and `clock_instance()` accessors, origin validation, the window checks and the
+frame-timeline check ([Ingress boundaries](../architecture/ingress-boundaries.md) §8).
+Lineage validation also re-derives the producer fingerprint from the binding's source
+revision. `tools/checks/source_dispatch.py` admits binding reads only at those
+operations and fails on a source-kind or source-identity branch anywhere in the
+schema packages, the envelope operations included. Source identity remains legitimate
+in registration, unit identity, revision projections and anchor resolution. The
+binding is still part of `lineage`, the window has not moved, and derived outputs still
+carry a clock id without its origin instance.
 
 ### Registration gate for PayloadRef
 

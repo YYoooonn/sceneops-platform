@@ -46,7 +46,8 @@ from sceneops_core.labels import (
     LabelSourceKind,
     ObservationAnchor,
 )
-from sceneops_core.provenance import PinnedContent, SourceTimeUnit, promote_to_ns
+from sceneops_core.provenance import PinnedContent
+from sceneops_core.temporal import SourceTimeUnit, promote_to_ns
 from sceneops_sources import ContentFileError, ContentFiles
 from sceneops_sources.nuscenes import (
     NuScenesAnnotation,

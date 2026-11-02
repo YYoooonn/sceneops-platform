@@ -114,12 +114,15 @@ source's vocabulary. See [Derived layer](./derived-layer.md).
 
 **Episode learning.** `EPISODE_LEARNING_DATA_BUILDING` aligns pinned Episode
 revisions (`align_episode` params: the DatasetVersion, `episodes`, each an
-`episode_id` either resolved to the revision that DatasetVersion pins or pinned by
-`source_artifact_id` + `source_manifest_sha256` to a registered revision, and one
+`episode_id` resolved to the revision that DatasetVersion pins, optionally stating that
+same revision by `source_artifact_id` + `source_manifest_sha256`, and one
 `alignment_config`) and hands the aligned revisions to `export_learning_data` in the
 export's own input shape (`export_inputs`: episode id, aligned artifact id,
-checksum). The export validates every aligned input and fails rather than
-publishing over an invalid one. The canonical Episodes are never rewritten.
+checksum). An aligned artifact is shared by every DatasetVersion pinning its source
+revision, and each Job checks that the version it names does
+([ADR-022](../adr/022-aligned-artifact-identity.md)). The export validates every
+aligned input and fails rather than publishing over an invalid one. The canonical
+Episodes are never rewritten.
 
 ### 2.1 Standalone Jobs
 
@@ -359,7 +362,7 @@ run steps); there is no outbox and no delivered marker.
 
 | Concern | Current implementation |
 | --- | --- |
-| Request identity | `execution_key = sha256(kind, type, dataset_id, dataset_version, model_id, model_version, params)` (`sceneops_core.executions.compute_execution_key`). Creating a Job or PipelineRun whose key already has a `PENDING` / `QUEUED` / `RUNNING` / `SUCCEEDED` record returns that record. `force: true` skips the reuse of a succeeded record: a PipelineRun is always new, a Job is new unless one of its key is still in flight, which is returned. Some job types normalize their params first so equivalent requests share a key (`params_for_execution_key`). |
+| Request identity | `execution_key = sha256(kind, type, dataset_id, dataset_version, model_id, model_version, params)` (`sceneops_core.executions.compute_execution_key`). Creating a Job or PipelineRun whose key already has a `PENDING` / `QUEUED` / `RUNNING` / `SUCCEEDED` record returns that record. `force: true` skips the reuse of a succeeded record: a PipelineRun is always new, a Job is new unless one of its key is still in flight, which is returned. Some job types normalize their params first so equivalent requests share a key (`params_for_execution_key`), and some add what the params cannot state, so a Job that succeeded under an earlier contract is not reused: ALIGN_EPISODE adds the schema version of the artifact it writes, VALIDATE_ALIGNED_EPISODE and PROFILE_ALIGNED_EPISODE that of the artifact they read and their semantics version, EXPORT_LEARNING_DATA and EXPORT_ANALYTICS_SNAPSHOT the schema version of the tables they write, and CURATE_EPISODES the schema version of the export it reads and its curation semantics version, beside the analysis versions it already had ([ADR-019](../adr/019-learning-data-schema-v2-and-contract-aware-jobs.md), [ADR-020](../adr/020-scene-analytics-schema-v2.md), [ADR-021](../adr/021-cross-artifact-temporal-integrity.md)). A PipelineRun's key is its request alone and task Jobs carry no key, so after an output-contract upgrade an unforced identical request still returns the old run; request one with `force: true`, after which unforced requests return that newest run ([ADR-018](../adr/018-aligned-episode-temporal-context.md)). |
 | Concurrent Job creation | At most one Job per execution key is `PENDING` / `QUEUED` / `RUNNING`: the partial unique index `uq_jobs_execution_key_in_flight` enforces it in PostgreSQL. `create_job` inserts with `ON CONFLICT DO NOTHING` against that index, so concurrent requests for one key converge on one Job and one `CREATED` event; a loser waits for the winner's transaction and returns its Job. Finished Jobs are outside the index, so a key keeps any number of succeeded and failed Jobs. The reuse of a succeeded Job is a read, not a constraint: a request whose lookup preceded a Job's whole run can start one more. PipelineRun creation has no such index; concurrent identical PipelineRun requests can each create a run. |
 | Standalone Job retry | Redispatching a `FAILED` Job (`POST /jobs/{id}/execute`) increments `retry_count`; past `max_retries` it is refused, and so is a retry while another Job of its key is in flight. Concurrent retries of one failure spend one retry: one of them queues the Job, the others are refused. |
 | Pipeline retry | Re-executing a `FAILED` or `BLOCKED` run resumes at its first unfinished task; succeeded and skipped tasks are not re-run. |
@@ -482,7 +485,10 @@ content, a retry or concurrent producer of identical content converges on the sa
 object and record, and a record that disagrees with an existing one on kind,
 location, checksum or size fails loudly (`ArtifactRecordConflictError`). Changed
 content for the same logical artifact is a new revision beside the old one. See
-[Storage layout](./storage-layout.md).
+[Storage layout](./storage-layout.md). `ALIGN_EPISODE` and the reports of its artifacts
+look for the record before writing, so a result that exists is reused where its record
+says it is, without a write; PostgreSQL and object storage share no transaction, so a
+crash between a write and its commit leaves an object for the next attempt to adopt.
 
 Ownership is recorded by `ArtifactOwnerType` / `owner_id` or one of the direct scoping
 columns (`dataset_id`, `scene_id`, `pipeline_run_id`, ...); see

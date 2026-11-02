@@ -5,9 +5,12 @@ from typing import TYPE_CHECKING
 from sceneops_analytics import (
     TABLE_BUILDERS,
     AnalyticsTableWriteResult,
+    SceneRevisionContent,
     build_keyframes_table,
     build_observations_table,
     build_scenes_table,
+    check_scene_table_frames,
+    scene_table_schema_stamp,
 )
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
@@ -18,7 +21,6 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_core.scenes.schemas import SceneManifest
 from sceneops_worker.derived.publication import register_published
 from sceneops_worker.scenes.resolver import list_dataset_version_scenes
 from sceneops_worker.scenes.resolver import resolve_registered_scene
@@ -27,7 +29,8 @@ from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 if TYPE_CHECKING:
     import polars as pl
 
-_MANIFEST_TABLE_BUILDERS = {
+_TABLE_BUILDERS = {
+    "scenes": build_scenes_table,
     "observations": build_observations_table,
     "keyframes": build_keyframes_table,
 }
@@ -66,8 +69,7 @@ class ExportAnalyticsSnapshotJobHandler(
 
         requested_tables = set(params.tables) if params.tables else set(TABLE_BUILDERS)
 
-        # Analytics tables are a full snapshot of the current DB/manifest state —
-        # always query all registered scenes of the DatasetVersion.
+        # A snapshot covers every Scene revision the DatasetVersion pins.
         all_scene_records = await list_dataset_version_scenes(
             context, dataset_id=dataset_id, dataset_version=dataset_version
         )
@@ -79,30 +81,26 @@ class ExportAnalyticsSnapshotJobHandler(
                 "Ensure register_scenes has completed before exporting analytics."
             )
 
-        # Every Scene is read at the revision its member pins, verified.
-        manifests: list[tuple[str, SceneManifest]] = []
-        if requested_tables & set(_MANIFEST_TABLE_BUILDERS):
-            for scene in all_scene_records:
-                resolved = await resolve_registered_scene(context, scene)
-                manifests.append((scene.scene_id, resolved.manifest))
-
-        # Every table is built before any is written, so a build failure
-        # refuses the whole export without leaving another table's object
-        # behind.
-        frames: dict[str, pl.DataFrame] = {}
-        if "scenes" in requested_tables:
-            frames["scenes"] = build_scenes_table(
-                dataset_id=dataset_id,
-                dataset_version=dataset_version,
-                scenes=all_scene_records,
+        # Every Scene is read at the revision its member pins, verified, and every
+        # table states what that manifest declares, the scenes table included.
+        scenes: list[SceneRevisionContent] = []
+        for record in all_scene_records:
+            resolved = await resolve_registered_scene(context, record)
+            scenes.append(
+                SceneRevisionContent(record=record, manifest=resolved.manifest)
             )
-        for table_name, builder in _MANIFEST_TABLE_BUILDERS.items():
-            if table_name in requested_tables:
-                frames[table_name] = builder(
-                    dataset_id=dataset_id,
-                    dataset_version=dataset_version,
-                    manifests=manifests,
-                )
+
+        # Every table is built and checked before any is written, so a refused
+        # table refuses the whole export without leaving another table's object
+        # behind.
+        frames: dict[str, pl.DataFrame] = {
+            table_name: builder(
+                dataset_id=dataset_id, dataset_version=dataset_version, scenes=scenes
+            )
+            for table_name, builder in _TABLE_BUILDERS.items()
+            if table_name in requested_tables
+        }
+        check_scene_table_frames(frames)
 
         tables: dict[str, AnalyticsTableWriteResult] = {}
         row_counts: dict[str, int] = {}
@@ -122,7 +120,10 @@ class ExportAnalyticsSnapshotJobHandler(
                 checksum=table.checksum,
                 size_bytes=table.size_bytes,
                 media_type="application/vnd.apache.parquet",
-                metadata={"table_name": table_name},
+                metadata={
+                    "table_name": table_name,
+                    "table_schema": scene_table_schema_stamp(table_name),
+                },
                 owner_type=ArtifactOwnerType.DATASET_VERSION,
                 owner_id=f"{dataset_id}:{dataset_version}",
                 dataset_id=dataset_id,

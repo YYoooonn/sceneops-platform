@@ -87,10 +87,9 @@ class EpisodeAlignmentInput(SceneOpsBaseModel):
     """One Episode to align, optionally pinned to the exact canonical
     EpisodeManifest revision to consume.
 
-    Unpinned, the revision is exactly the one the EpisodeRecord points to
-    when the job runs (``manifest_artifact_id``, ADR-007 §14.4), never "the
-    latest artifact". A pin is the pair ``source_artifact_id`` +
-    ``source_manifest_sha256`` and always wins.
+    Unpinned, the revision is the one the DatasetVersion's member pins, never
+    "the latest artifact". A pin is the pair ``source_artifact_id`` +
+    ``source_manifest_sha256``; a Job refuses a pin of any other revision.
     """
 
     episode_id: str = Field(min_length=1)
@@ -124,7 +123,7 @@ class AlignEpisodeJobParams(BaseJobParams):
     participate in this Job's execution-key dedup identity: the API computes
     the execution key from these params at Job-creation time, before the
     worker has read any source bytes (the API pins unpinned inputs to the
-    Episode's current revision for that reason). ``force=true`` is available
+    revision the DatasetVersion pins for that reason). ``force=true`` is available
     for a caller that specifically needs a fresh execution.
     """
 

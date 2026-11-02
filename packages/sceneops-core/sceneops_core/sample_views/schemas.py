@@ -51,8 +51,8 @@ from pydantic import (
 from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.checksums import SHA256_CHECKSUM_PATTERN, sha256_checksum
 from sceneops_core.labels.schemas import LabelSetRef
-from sceneops_core.provenance import SourceTimestampNs
 from sceneops_core.scenes.schemas.manifests import LocalId, SourceClock, VerbatimKey
+from sceneops_core.temporal import SourceTimestampNs
 
 SAMPLE_VIEW_SCHEMA_V1: Final = "sceneops.scene_sample_view/v1"
 

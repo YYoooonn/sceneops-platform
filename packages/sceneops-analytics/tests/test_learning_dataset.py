@@ -63,6 +63,7 @@ from sceneops_core.episodes.learning import (
     SequenceBoundaryError,
 )
 from sceneops_core.episodes.learning_export import (
+    LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
     LearningDataExportConfig,
     LearningDataExportManifest,
@@ -147,6 +148,8 @@ def _episode(
         source_start_timestamp_us=0,
         source_end_timestamp_us=(len(steps) - 1) * 100_000,
         source_clock="mcap_log_time",
+        clock_origin="source",
+        clock_scope=("test-source",),
         alignment_semantics_version=ALIGNMENT_SEMANTICS_VERSION,
         alignment_config=_CONFIG,
         target_frequency_hz=10.0,
@@ -302,6 +305,7 @@ async def _write_snapshot(
         row_counts[name] = df.height
 
     manifest = LearningDataExportManifest(
+        schema_version=LEARNING_DATA_SCHEMA_VERSION,
         export_id=export_id,
         dataset_id=DATASET_ID,
         dataset_version=DATASET_VERSION,
@@ -885,6 +889,7 @@ class TestLazyQueryBehavior:
             table_uris[name] = result.uri
 
         manifest = LearningDataExportManifest(
+            schema_version=LEARNING_DATA_SCHEMA_VERSION,
             export_id=export_id,
             dataset_id=DATASET_ID,
             dataset_version=DATASET_VERSION,

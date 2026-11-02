@@ -13,13 +13,13 @@ from pathlib import Path
 import pytest
 
 from sceneops_core.scenes.recording_build import RecordingSceneBuildConfig
-from sceneops_core.provenance import (
+from sceneops_core.provenance import PinnedRecording
+from sceneops_core.provenance.segmentation import recording_unit_key
+from sceneops_core.temporal import (
     ClockOrigin,
     IncomparableClocksError,
-    PinnedRecording,
     require_comparable,
 )
-from sceneops_core.provenance.segmentation import recording_unit_key
 from sceneops_scenes.recording_builder import (
     RECORDING_SCENE_PRODUCER_ID,
     RecordingSceneBuildError,

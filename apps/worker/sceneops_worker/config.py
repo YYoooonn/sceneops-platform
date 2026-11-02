@@ -72,6 +72,10 @@ class WorkerSettings(BaseSettings):
         return self.artifact.canonical_root_uri
 
     @property
+    def aligned_episode_root_uri(self) -> str:
+        return self.artifact.aligned_episode_root_uri
+
+    @property
     def run_root_uri(self) -> str:
         return self.artifact.run_root_uri
 

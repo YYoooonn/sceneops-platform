@@ -9,7 +9,6 @@ from pydantic import TypeAdapter, ValidationError
 import sceneops_core.provenance as provenance
 from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.provenance import (
-    INT64_MAX,
     ContentSourceRevision,
     ContentUnitSource,
     PinnedContent,
@@ -17,14 +16,13 @@ from sceneops_core.provenance import (
     RecordingSegmentSource,
     RecordingSourceRevision,
     SourceRevision,
-    SourceTimeUnit,
-    promote_to_ns,
 )
 from sceneops_core.sources import (
     SourceContentInventory,
     SourceFileEntry,
     content_id_for,
 )
+from sceneops_core.temporal import INT64_MAX, SourceTimeUnit, promote_to_ns
 
 CHECKSUM = "sha256:" + "a" * 64
 CONTENT_CHECKSUM = "sha256:" + "c" * 64

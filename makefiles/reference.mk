@@ -248,6 +248,34 @@ reference-verify-nuscenes-labels:
 
 MIXED_SOURCE_VERIFY := uv run --no-sync python -I tools/reference/mixed_source_verify.py
 
+# --------------------
+# Derived temporal ownership (ADR-021, docs/development/reference-verification.md).
+#
+# reference-verify-temporal-selftest -- a synthetic platform state built by the real
+#                                       builders passes and every negative control is
+#                                       detected. No stack.
+# reference-verify-temporal          -- derived artifacts of the platform against the
+#                                       canonical manifests they pin, then the negative
+#                                       controls in an overlay (read-only). Any of
+#                                       ALIGNED="<artifact id> ..."
+#                                       LEARNING_EXPORT="<manifest artifact id> ..."
+#                                       ANALYTICS_JOB="<job id> ..."
+# --------------------
+
+TEMPORAL_LINEAGE_VERIFY := uv run --no-sync python -I tools/reference/temporal_lineage_verify.py
+
+.PHONY: reference-verify-temporal-selftest
+reference-verify-temporal-selftest:
+	@$(TEMPORAL_LINEAGE_VERIFY) selftest
+
+.PHONY: reference-verify-temporal
+reference-verify-temporal:
+	@test -n "$(ALIGNED)$(LEARNING_EXPORT)$(ANALYTICS_JOB)" || { echo "ALIGNED=, LEARNING_EXPORT= or ANALYTICS_JOB= is required"; exit 2; }
+	@$(REFERENCE_VERIFY_ENV) $(TEMPORAL_LINEAGE_VERIFY) verify \
+		$(foreach id,$(ALIGNED),--aligned-artifact $(id)) \
+		$(foreach id,$(LEARNING_EXPORT),--learning-export $(id)) \
+		$(foreach id,$(ANALYTICS_JOB),--analytics-job $(id))
+
 .PHONY: reference-verify-mixed-expectations
 reference-verify-mixed-expectations:
 	@$(MIXED_SOURCE_VERIFY) derive $(if $(WRITE),--write)

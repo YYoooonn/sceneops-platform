@@ -62,6 +62,7 @@ from sceneops_core.episodes.alignment.schemas import AlignedEpisode, LearningSte
 from sceneops_core.episodes.learning import EpisodeRef, FeatureProjection
 from sceneops_core.episodes.learning_export import (
     LEARNING_DATA_LAYOUT_VERSION_SHARDED,
+    LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
     LearningDataExportConfig,
     LearningDataExportManifest,
@@ -70,6 +71,7 @@ from sceneops_core.episodes.learning_export import (
     learning_data_export_id,
 )
 from sceneops_core.episodes.schemas.enums import EpisodeOutcome
+from sceneops_core.temporal import ClockOrigin
 from sceneops_storage import ArtifactStore, LocalArtifactStore
 
 DT_US = 100_000
@@ -488,6 +490,8 @@ def _aligned_episode(
         source_start_timestamp_us=0,
         source_end_timestamp_us=(step_count - 1) * DT_US,
         source_clock="mcap_log_time",
+        clock_origin=ClockOrigin.SOURCE,
+        clock_scope=("fixture-source",),
         alignment_semantics_version=ALIGNMENT_SEMANTICS_VERSION,
         alignment_config=_ALIGNMENT_CONFIG,
         target_frequency_hz=TARGET_FREQUENCY_HZ,
@@ -637,6 +641,7 @@ async def write_scaled_dataset_artifacts(
     }
 
     learning_manifest = LearningDataExportManifest(
+        schema_version=LEARNING_DATA_SCHEMA_VERSION,
         export_id=export_id,
         dataset_id=dataset_id,
         dataset_version=dataset_version,

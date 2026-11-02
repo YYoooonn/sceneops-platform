@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from sceneops_core.episodes.recording_build import EpisodeStreamRole
-from sceneops_core.episodes.schemas import EpisodeManifest
+from sceneops_core.episodes.schemas import EpisodeManifest, EpisodeStreamRole
 
 from .reports import EpisodeProfileResult, EpisodeStreamProfile
 

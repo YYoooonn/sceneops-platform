@@ -176,6 +176,32 @@ def _sync_read_range(
     return future.result()
 
 
+def _read_footer_sync(
+    artifact_store: ArtifactStore,
+    uri: str,
+    size: int,
+    loop: asyncio.AbstractEventLoop,
+) -> pq.FileMetaData:
+    file_obj = _LazyRangeFile(
+        lambda offset, length: _sync_read_range(
+            artifact_store, uri, offset, length, loop
+        ),
+        total_size=size,
+    )
+    try:
+        return pq.ParquetFile(file_obj).metadata
+    except Exception as exc:  # noqa: BLE001 -- surfaced as one clear error type
+        raise ShardMetadataError(f"{uri}: {exc}") from exc
+
+
+async def read_shard_footer(
+    artifact_store: ArtifactStore, uri: str, size: int
+) -> pq.FileMetaData:
+    """One shard's footer alone, for a check that needs no rows."""
+    loop = asyncio.get_running_loop()
+    return await asyncio.to_thread(_read_footer_sync, artifact_store, uri, size, loop)
+
+
 def _read_row_group_sync(
     artifact_store: ArtifactStore,
     uri: str,
@@ -303,5 +329,6 @@ async def read_shard_row_groups_bulk(
 __all__ = [
     "ShardMetadataError",
     "read_episode_row_group",
+    "read_shard_footer",
     "read_shard_row_groups_bulk",
 ]

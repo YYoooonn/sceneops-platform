@@ -23,8 +23,9 @@ from sceneops_episodes.recording_builder import (
     iter_planned_payloads,
     plan_recording_episodes,
 )
-from sceneops_core.provenance import ClockOrigin, PinnedRecording
+from sceneops_core.provenance import PinnedRecording
 from sceneops_core.provenance.segmentation import recording_unit_key
+from sceneops_core.temporal import ClockOrigin
 from sceneops_scenes.recording_builder import plan_recording_scenes
 
 sys.path.insert(0, str(Path(__file__).parent))

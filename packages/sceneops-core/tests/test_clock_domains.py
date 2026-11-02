@@ -15,16 +15,7 @@ from sceneops_core.episodes.schemas import (
     load_canonical_episode_manifest,
 )
 from sceneops_core.episodes.testing import episode_manifest, state
-from sceneops_core.provenance import (
-    ClockDomain,
-    ClockInstance,
-    ClockOrigin,
-    ContentUnitSource,
-    IncomparableClocksError,
-    clock_instance,
-    recording_clock_domains,
-    require_comparable,
-)
+from sceneops_core.provenance import ContentUnitSource, recording_clock_domains
 from sceneops_core.scenes.schemas import (
     SceneManifest,
     UnsupportedSceneManifestVersionError,
@@ -32,6 +23,14 @@ from sceneops_core.scenes.schemas import (
 )
 from sceneops_core.scenes.testing import build_scene_manifest, recording_source
 from sceneops_core.sources.content import content_id_for
+from sceneops_core.temporal import (
+    ClockDomain,
+    ClockInstance,
+    ClockOrigin,
+    IncomparableClocksError,
+    clock_instance,
+    require_comparable,
+)
 
 CONTENT_CHECKSUM = "sha256:" + "c" * 64
 
@@ -271,10 +270,14 @@ def test_two_clocks_of_one_robot_run_are_not_comparable():
 
 def test_unit_origin_is_comparable_only_within_its_unit():
     relative = ClockDomain(clock="format.frame_time", origin="unit", resolution_ns=1)
-    first = clock_instance(relative, _content_source("0"))
-    require_comparable(first, clock_instance(relative, _content_source("0")))
+    first = clock_instance(relative, _content_source("0").origin_scope())
+    require_comparable(
+        first, clock_instance(relative, _content_source("0").origin_scope())
+    )
     with pytest.raises(IncomparableClocksError):
-        require_comparable(first, clock_instance(relative, _content_source("1")))
+        require_comparable(
+            first, clock_instance(relative, _content_source("1").origin_scope())
+        )
 
 
 def test_unix_epoch_is_comparable_across_sources():
@@ -282,12 +285,12 @@ def test_unix_epoch_is_comparable_across_sources():
         clock="format.timestamp", origin="unix_epoch", resolution_ns=1
     )
     require_comparable(
-        clock_instance(absolute, _content_source("0")),
-        clock_instance(absolute, recording_source()),
+        clock_instance(absolute, _content_source("0").origin_scope()),
+        clock_instance(absolute, recording_source().origin_scope()),
     )
     source_origin = absolute.model_copy(update={"origin": ClockOrigin.SOURCE})
     with pytest.raises(IncomparableClocksError):
         require_comparable(
-            clock_instance(source_origin, _content_source("0")),
-            clock_instance(source_origin, recording_source()),
+            clock_instance(source_origin, _content_source("0").origin_scope()),
+            clock_instance(source_origin, recording_source().origin_scope()),
         )

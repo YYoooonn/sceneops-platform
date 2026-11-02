@@ -164,8 +164,9 @@ class JobService:
         """Pin each unpinned Episode to the revision its DatasetVersion's
         member pins -- an Episode has no current revision (ADR-015 §6.4) --
         before the execution key is computed, so an unpinned ALIGN_EPISODE
-        request dedups on source content. A caller-supplied pin always
-        wins."""
+        request dedups on source content. A caller-supplied pin stays as
+        stated; the Job refuses it unless it is the revision its DatasetVersion
+        pins."""
         episodes = raw_params.get("episodes")
         if not isinstance(episodes, list):
             # Let normal Pydantic param validation raise its own clear error.

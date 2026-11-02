@@ -6,6 +6,7 @@ from typing import Any
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
+from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.common.derived_ids import aligned_episode_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.episodes.alignment import (
@@ -26,13 +27,21 @@ from sceneops_core.jobs.schemas.params import EpisodeAlignmentInput
 from sceneops_core.jobs.schemas.results import AlignedEpisodeRef
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.episodes.schemas import EpisodeRevisionRecord
+from sceneops_episodes.artifacts import canonical_document_bytes
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+from sceneops_worker.jobs.dataset._aligned_episode_resolution import (
+    find_registered_output,
+)
 
 
 class SourceManifestNotFoundError(Exception):
     """No EPISODE_MANIFEST ArtifactRecord (or its bytes) could be resolved
     for the requested Episode / pinned source revision."""
+
+
+class SourceRevisionNotMemberError(Exception):
+    """The pinned revision is not the one the invoking DatasetVersion pins."""
 
 
 class SourceRevisionMismatchError(Exception):
@@ -47,17 +56,17 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
     """Pinned canonical Episodes + one TemporalAlignmentConfig -> one
     AlignedEpisodeArtifact per Episode (derived, L3; ADR-007 §13.10, §31.8).
 
-    Resolves one exact canonical EpisodeManifest revision per Episode (the
-    one the DatasetVersion's member pins, or an explicitly pinned registered
-    revision of the Episode), verifies
-    its bytes against their checksum, parses them strictly, runs the pure
-    ``align_episode`` engine and persists the result with the source
+    Resolves the canonical EpisodeManifest revision the DatasetVersion's member
+    pins, verifies its bytes against their checksum, parses them strictly, runs
+    the pure ``align_episode`` engine and persists the result with the source
     revision it consumed. All timeline / association decisions live in the
     engine; canonical Episode data is never rewritten.
 
-    Every aligned artifact is write-once at a deterministic key and its
-    ArtifactRecord id derives from (episode, checksum), so a retry of the
-    same inputs after a partial failure converges on the same artifacts.
+    The DatasetVersion decides whether a revision may be aligned here and nothing
+    about the result (ADR-022). Every aligned artifact is write-once at a key of
+    (episode, source revision, recipe) and its ArtifactRecord id derives from
+    (episode, checksum), so a retry after a partial failure, or another
+    DatasetVersion pinning the same revision, converges on the same artifact.
     """
 
     @property
@@ -85,16 +94,21 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
         context = request.context
         job = request.job
 
-        aligned_refs: list[AlignedEpisodeRef] = []
+        refs_by_episode: dict[str, AlignedEpisodeRef] = {}
         semantics_version: str | None = None
         config_hash = alignment_config_hash(params.alignment_config)
-        for item in params.episodes:
+        # Registered records stay locked until the commit below, and Jobs of
+        # different DatasetVersions now register the same records, so they take
+        # them in one order or they can deadlock over two shared Episodes.
+        for item in sorted(params.episodes, key=lambda i: i.episode_id):
             ref, semantics_version = await self._align_one(
                 context=context, job=job, params=params, item=item
             )
-            aligned_refs.append(ref)
+            refs_by_episode[item.episode_id] = ref
 
         await context.commit()
+
+        aligned_refs = [refs_by_episode[i.episode_id] for i in params.episodes]
 
         return AlignEpisodeJobResult(
             aligned=aligned_refs,
@@ -184,49 +198,61 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
             aligned.source_clock,
         )
 
-        write_result = await context.episode_artifact_store.write_aligned_episode(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            episode_id=item.episode_id,
-            source_manifest_sha256=computed_sha256,
-            alignment_key=key,
-            artifact=artifact,
-        )
-
+        data = canonical_document_bytes(artifact)
+        checksum = sha256_checksum(data)
         aligned_artifact_id = aligned_episode_artifact_id(
-            episode_id=item.episode_id, checksum=write_result.checksum
+            episode_id=item.episode_id, checksum=checksum
         )
-        await context.artifact_record_store.register(
+        existing = await find_registered_output(
+            context,
             artifact_id=aligned_artifact_id,
-            ref=ArtifactRef(
-                kind=ArtifactKind.ALIGNED_EPISODE_MANIFEST,
-                uri=write_result.uri,
-                media_type="application/json",
-                checksum=write_result.checksum,
-                size_bytes=write_result.size_bytes,
-                metadata={
-                    "episode_id": item.episode_id,
-                    "source_artifact_id": source_artifact_id,
-                    "source_manifest_sha256": computed_sha256,
-                    "alignment_config_hash": config_hash,
-                    "alignment_semantics_version": aligned.alignment_semantics_version,
-                    "source_clock": aligned.source_clock,
-                },
-            ),
-            owner_type=ArtifactOwnerType.EPISODE,
-            owner_id=item.episode_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            job_id=job.job_id,
-            pipeline_run_id=job.pipeline_run_id,
+            kind=ArtifactKind.ALIGNED_EPISODE_MANIFEST,
+            data=data,
         )
+        if existing is not None:
+            uri = existing.uri
+        else:
+            write_result = await context.episode_artifact_store.write_aligned_episode(
+                episode_id=item.episode_id,
+                source_manifest_sha256=computed_sha256,
+                alignment_key=key,
+                artifact=artifact,
+            )
+            uri = write_result.uri
+            # Owned by the Episode and in no DatasetVersion, as the manifest it
+            # was computed from is. The Job and PipelineRun are those of the
+            # first registration.
+            await context.artifact_record_store.register(
+                artifact_id=aligned_artifact_id,
+                ref=ArtifactRef(
+                    kind=ArtifactKind.ALIGNED_EPISODE_MANIFEST,
+                    uri=uri,
+                    media_type="application/json",
+                    checksum=checksum,
+                    size_bytes=len(data),
+                    metadata={
+                        "episode_id": item.episode_id,
+                        "source_artifact_id": source_artifact_id,
+                        "source_manifest_sha256": computed_sha256,
+                        "alignment_config_hash": config_hash,
+                        "alignment_semantics_version": (
+                            aligned.alignment_semantics_version
+                        ),
+                        "source_clock": aligned.source_clock,
+                    },
+                ),
+                owner_type=ArtifactOwnerType.EPISODE,
+                owner_id=item.episode_id,
+                job_id=job.job_id,
+                pipeline_run_id=job.pipeline_run_id,
+            )
 
         return (
             AlignedEpisodeRef(
                 episode_id=item.episode_id,
                 aligned_artifact_id=aligned_artifact_id,
-                aligned_artifact_uri=write_result.uri,
-                aligned_artifact_checksum=write_result.checksum,
+                aligned_artifact_uri=uri,
+                aligned_artifact_checksum=checksum,
                 source_artifact_id=source_artifact_id,
                 source_manifest_sha256=computed_sha256,
                 source_checksum_verified=source_checksum_verified,
@@ -248,13 +274,18 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
     ) -> tuple[str, str, str]:
         """Returns (source_artifact_id, uri, checksum).
 
-        Pinned (item.source_artifact_id set): that exact EPISODE_MANIFEST
-        ArtifactRecord, which must be a registered revision of this Episode
-        and may be another one than the member pins. Unpinned: exactly the
-        revision the DatasetVersion's member pins, never "the latest
-        artifact".
+        Always the revision the DatasetVersion's member pins, never "the latest
+        artifact". A pin in the request has to state that same revision: the
+        result is shared by every DatasetVersion pinning its source, so
+        aligning another revision here would produce nothing this one can use.
         """
-        artifact_id = item.source_artifact_id or member.manifest_artifact_id
+        artifact_id = member.manifest_artifact_id
+        if item.source_artifact_id not in (None, artifact_id):
+            raise SourceRevisionNotMemberError(
+                f"source_artifact_id {item.source_artifact_id!r} is not the revision "
+                f"of episode {member.episode_id!r} this DatasetVersion pins "
+                f"({artifact_id!r})"
+            )
         record = await context.artifact_record_store.get(artifact_id)
         if record is None or record.kind != ArtifactKind.EPISODE_MANIFEST.value:
             raise SourceManifestNotFoundError(

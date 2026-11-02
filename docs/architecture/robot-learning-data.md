@@ -145,6 +145,69 @@ these exactly.
   `previous`, otherwise `nearest`), never from channel names. The timeline
   spans the Episode window when aligning on its clock. Alignment semantics
   version `v3`.
+- An `AlignedEpisode` states the origin instance of its clock once, as the source
+  EpisodeManifest issues it (`manifest.clock_instance(clock)`): `source_clock`,
+  `clock_origin` and `clock_scope`, an ordered tuple of strings. All three are required
+  and `clock_instance` reconstructs the instance. Two aligned timelines are comparable
+  exactly when their instances are equal (`require_comparable`), never because their
+  clock ids or timestamp values match. The scope is opaque: no consumer reads what an
+  element names, and `restore_clock_instance` checks its structure, not that it belongs
+  to the Episode the artifact names. See
+  [ADR-018](../adr/018-aligned-episode-temporal-context.md).
+
+### Aligned artifact versions
+
+Three versions answer different questions and move independently:
+
+| Version | Answers | Current |
+| --- | --- | --- |
+| `ALIGNMENT_SEMANTICS_VERSION` | how the algorithm behaves | `v3` |
+| `ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION` | the shape of the persisted artifact | `v2` |
+| `alignment_key` | where this recipe's artifact is stored under its source revision: the config hash, both versions above and the clock | derived |
+
+An aligned artifact is identified by its source revision and that recipe. No
+DatasetVersion reaches its bytes, its location or its record, so every DatasetVersion
+pinning the revision shares it, and each Job using it checks that the one it names does
+([ADR-022](../adr/022-aligned-artifact-identity.md)).
+
+The artifact schema version also participates in the ALIGN_EPISODE execution key, so a
+Job that succeeded under an earlier schema is not reused. Every read of a persisted
+artifact goes through `load_aligned_episode_artifact`, which refuses any other version
+(`UnsupportedAlignedArtifactSchemaError`), and a document that states none. An artifact
+of an earlier schema stays where it is, unmodified, and is not readable: align the
+Episode again to get one of the current schema. VALIDATE and PROFILE keys hold the same
+schema version and their analysis's semantics version, so the success of an earlier reader is
+not returned as today's.
+
+### Learning data schema
+
+`LEARNING_DATA_SCHEMA_VERSION` (`v2`) versions the export tables. Current
+contract ([ADR-019](../adr/019-learning-data-schema-v2-and-contract-aware-jobs.md)):
+
+| Table | Grain | Temporal columns |
+| --- | --- | --- |
+| `learning_episodes` | one row per `(episode_id, aligned_artifact_checksum)` | `source_clock`, `clock_origin` (`Utf8`), `clock_scope` (`List(Utf8)`, ordered), `source_start_timestamp_us`, `source_end_timestamp_us` |
+| `learning_steps` | one row per step | `timestamp_us`, no context |
+| `learning_signals` | one row per declared channel per step | `timestamp_us` and source timestamps, no context |
+
+The context is declared once per Episode, copied from the validated AlignedEpisode, and a step
+or signal row reaches it through `(episode_id, aligned_artifact_checksum)`.
+`SceneOpsDataset.get_episode(ref).clock_instance` restores it through
+`restore_clock_instance`; compare whole instances with `require_comparable`, and never read a
+scope element, source kind, dataset format or URI namespace to decide comparability. A shard read
+outside `SceneOpsDataset` has no temporal interpretation of its own.
+
+A reader accepts an export only if its manifest's `schemaVersion`, each file's
+`sceneops.table_schema` footer (`learning_data/<version>/<table>`) and each file's columns all
+state the supported version, and raises `UnsupportedLearningDataSchemaError` otherwise. It also
+refuses invalid clock context, an `EpisodeRef` with two rows, an Episode with two instances of one
+clock, and step or signal rows not owned by the Episode they are read for
+(`LearningDataIntegrityError`, `ShardIndexMismatchError`). Exports of an earlier schema stay in
+place and are not readable: export the aligned revisions again.
+
+`export_id` and the EXPORT_LEARNING_DATA execution key include the schema version, so a new schema
+writes to new locations and an earlier success is not returned. A new column contract must bump
+the version: `test_learning_schema_v2.py` holds each version's exact columns.
 
 ### Signal presence (2.2, 2.5A, 2.7A)
 
@@ -283,6 +346,8 @@ per-instance caches.
   `torch.utils.data.Dataset` yet. `SequenceSampler.get(index)` is async;
   `Dataset.__getitem__` is a hard synchronous contract with no established
   sync read path in `sceneops-storage` to build a lazy bridge on safely.
+- A learning table's clock context is structural: nothing checks that a stated scope belongs to
+  the Episode stating it, which takes the Episode's canonical manifest.
 - Dense feature projection (2.7A) supports numeric scalar/vector only --
   orientation/reference/binary values are not projectable in v1.
 - `reference_channel` and `reference_metadata` other than its selector on a

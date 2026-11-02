@@ -125,7 +125,7 @@ help:
 	@echo "Operator tools (diagnostics and manual operations -- NOT acceptance gates; docs/development/local-development.md#operator-tools):"
 	@echo "=================================================================="
 	@echo "  make check-env / check-imports / check-celery        Host tooling / api + worker image imports / broker and worker liveness"
-	@echo "  make check-boundaries                                Dependency direction over apps / packages / integrations / tools: production code imports packages only (static; part of make test)"
+	@echo "  make check-boundaries                                Dependency direction over apps / packages / integrations / tools, and no source dispatch or binding-time read in canonical processing (static; part of make test)"
 	@echo "  make check-runtime-boundary                          Raw source is mounted only by the acquisition / reference-preparation services (starts nothing)"
 	@echo "  make check-inference-server / check-inference-server-ready   GroundingDINO server integration liveness / readiness"
 	@echo "  make bridge-check                                    rclpy and the MCAP storage plugin in the ROS 2 -> Kafka bridge image"

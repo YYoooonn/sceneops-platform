@@ -56,7 +56,6 @@ from typing import Any, Final
 from sceneops_core.episodes.recording_build import (
     EpisodeEventSourceConfig,
     EpisodeStreamConfig,
-    EpisodeStreamRole,
     EpisodeTimePolicy,
     EpisodeTimeSource,
     EventMarkerSegmentation,
@@ -71,9 +70,9 @@ from sceneops_core.episodes.schemas import (
     EpisodeManifest,
     EpisodeOccurrence,
     EpisodeStream,
+    EpisodeStreamRole,
 )
 from sceneops_core.provenance import (
-    INT64_MAX,
     PinnedRecording,
     ProducerInfo,
     recording_clock_domains,
@@ -85,6 +84,7 @@ from sceneops_core.provenance.segmentation import (
     recording_unit_key,
 )
 from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK, MCAP_PUBLISH_TIME_CLOCK
+from sceneops_core.temporal import INT64_MAX
 from sceneops_recording import (
     RecordingMessage,
     Ros2Decoder,

@@ -55,12 +55,14 @@ from sceneops_core.episodes.alignment import (
 from sceneops_core.episodes.alignment.schemas import AlignedEpisode, LearningStep
 from sceneops_core.episodes.learning import EpisodeRef, FeatureProjection
 from sceneops_core.episodes.learning_export import (
+    LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
     LearningDataExportConfig,
     LearningDataExportManifest,
     learning_data_export_id,
 )
 from sceneops_core.episodes.schemas.enums import EpisodeOutcome
+from sceneops_core.temporal import ClockOrigin
 from sceneops_storage import ArtifactStore, LocalArtifactStore
 
 # The golden fixture's own DatasetVersion identity; it never exists outside
@@ -241,6 +243,8 @@ def _aligned_episode(spec: InteropEpisodeSpec) -> AlignedEpisode:
         source_start_timestamp_us=0,
         source_end_timestamp_us=(spec.step_count - 1) * DT_US,
         source_clock="mcap_log_time",
+        clock_origin=ClockOrigin.SOURCE,
+        clock_scope=("fixture-source",),
         alignment_semantics_version=ALIGNMENT_SEMANTICS_VERSION,
         alignment_config=_ALIGNMENT_CONFIG,
         target_frequency_hz=TARGET_FREQUENCY_HZ,
@@ -431,6 +435,7 @@ async def build_interop_test_dataset(tmp_path) -> InteropDatasetBootstrap:
         row_counts[name] = df.height
 
     learning_manifest = LearningDataExportManifest(
+        schema_version=LEARNING_DATA_SCHEMA_VERSION,
         export_id=export_id,
         dataset_id=INTEROP_DATASET_ID,
         dataset_version=INTEROP_DATASET_VERSION,

@@ -44,6 +44,9 @@ from sceneops_core.artifacts.schemas import (  # noqa: E402
     ArtifactKind,
     ArtifactRef,
 )
+from sceneops_core.episodes.learning_export import (  # noqa: E402
+    UnsupportedLearningDataSchemaError,
+)
 from sceneops_core.integration_runtime import ExternalDatasetRef  # noqa: E402
 from sceneops_core.integration_runtime import (  # noqa: E402
     CanonicalDatasetRef,
@@ -164,6 +167,21 @@ async def test_execute_rejects_checksum_mismatch(tmp_path):
 
     with pytest.raises(IntegrationRuntimeError, match="checksum mismatch"):
         await execute(request, artifact_store=bootstrap.artifact_store)
+
+
+async def test_execute_refuses_an_export_of_another_schema(tmp_path):
+    bootstrap = await build_interop_test_dataset(tmp_path)
+    manifest_ref = await _write_manifest_artifact(bootstrap, tmp_path)
+    store = bootstrap.artifact_store
+    document = json.loads(await store.read_bytes(manifest_ref.uri))
+    document["schema_version"] = "v1"
+    data = json.dumps(document).encode()
+    await store.write_bytes(manifest_ref.uri, data)
+    stale_ref = manifest_ref.model_copy(update={"checksum": _sha256_prefixed(data)})
+
+    with pytest.raises(UnsupportedLearningDataSchemaError, match="'v1'"):
+        await execute(_request(tmp_path, manifest_ref=stale_ref), artifact_store=store)
+    assert not (tmp_path / "lerobot-out").exists()
 
 
 async def test_execute_rejects_invalid_config(tmp_path):

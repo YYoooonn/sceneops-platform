@@ -6,7 +6,9 @@ asynchronous, each on its own declared clock. Every temporal decision is
 made here, never in canonicalization:
 
     clock          one alignment clock (``TemporalSourceContext.source_clock``);
-                   a stream on any other clock is rejected, never converted
+                   a stream on any other clock is rejected, never converted;
+                   the result states the origin instance the manifest issues
+                   for it, the same way for every source
     channels       observation and state fields -> observation channels, action
                    fields -> action channels, named ``<topic>#<field>``; an
                    observation payload is a reference channel named ``<topic>``
@@ -26,11 +28,11 @@ Deterministic: identical inputs always produce an identical output.
 
 from __future__ import annotations
 
-from sceneops_core.episodes.recording_build import EpisodeStreamRole
 from sceneops_core.episodes.schemas import (
     EpisodeManifest,
     EpisodeOccurrence,
     EpisodeStream,
+    EpisodeStreamRole,
 )
 
 from .config import TemporalAlignmentConfig, TemporalSourceContext
@@ -230,11 +232,17 @@ def align_episode(
             )
         )
 
+    # Resolved last: no failure above changes, and an occurrence on this clock
+    # exists by now, so the manifest's clock-domain rules have declared it.
+    instance = manifest.clock_instance(source_context.source_clock)
+
     return AlignedEpisode(
         episode_id=episode_id,
         source_start_timestamp_us=start_us,
         source_end_timestamp_us=end_us,
-        source_clock=source_context.source_clock,
+        source_clock=instance.clock,
+        clock_origin=instance.origin,
+        clock_scope=instance.scope,
         alignment_semantics_version=ALIGNMENT_SEMANTICS_VERSION,
         alignment_config=config,
         target_frequency_hz=config.target_frequency_hz,

@@ -37,11 +37,27 @@ Three tables, mirroring the existing Scene precedent
   channels present at every step" gets that only if align_episode() itself
   already produced that shape; this builder is a faithful, non-inventive
   materialization of whatever AlignedEpisode.steps actually contains.
+
+Temporal context is normalized (ADR-019). ``learning_episodes`` states one
+Episode's clock instance as ``(source_clock, clock_origin, clock_scope)``, copied
+from the already validated AlignedEpisode, so the scope stays opaque here as it is
+everywhere. Step and signal rows state none: their timestamps are on the instance
+of the ``learning_episodes`` row they belong to through
+``(episode_id, aligned_artifact_checksum)``. A shard alone therefore does not say
+which timestamps may be compared; ``SceneOpsDataset`` does.
+
+Every table also states its schema in its Parquet footer
+(``LEARNING_TABLE_SCHEMA_METADATA_KEY``), so a file is judged by what it declares
+and not by whether its columns happen to parse.
 """
 
 from __future__ import annotations
 
+import io
+
 import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from sceneops_core.episodes.alignment import (
     AlignedEpisodeArtifact,
@@ -54,6 +70,17 @@ from sceneops_core.episodes.alignment.schemas import (
     AlignedValue,
     LearningStep,
 )
+from sceneops_core.episodes.learning_export import (
+    LEARNING_DATA_SCHEMA_VERSION,
+    UnsupportedLearningDataSchemaError,
+)
+
+from .parquet_contract import (
+    TABLE_SCHEMA_METADATA_KEY,
+    arrow_columns,
+    declared_columns,
+    stated_table_schema,
+)
 
 LEARNING_EPISODES_SCHEMA: dict[str, pl.PolarsDataType] = {
     "dataset_id": pl.Utf8,
@@ -64,6 +91,8 @@ LEARNING_EPISODES_SCHEMA: dict[str, pl.PolarsDataType] = {
     "source_start_timestamp_us": pl.Int64,
     "source_end_timestamp_us": pl.Int64,
     "source_clock": pl.Utf8,
+    "clock_origin": pl.Utf8,
+    "clock_scope": pl.List(pl.Utf8),
     "alignment_semantics_version": pl.Utf8,
     "alignment_config_hash": pl.Utf8,
     "target_frequency_hz": pl.Float64,
@@ -110,6 +139,72 @@ LEARNING_SIGNALS_SCHEMA: dict[str, pl.PolarsDataType] = {
     "interpolation_ratio": pl.Float64,
 }
 
+LEARNING_TABLE_SCHEMAS: dict[str, dict[str, pl.PolarsDataType]] = {
+    "learning_episodes": LEARNING_EPISODES_SCHEMA,
+    "learning_steps": LEARNING_STEPS_SCHEMA,
+    "learning_signals": LEARNING_SIGNALS_SCHEMA,
+}
+
+LEARNING_TABLE_SCHEMA_METADATA_KEY = TABLE_SCHEMA_METADATA_KEY
+
+
+def learning_table_schema_stamp(table_name: str) -> str:
+    """What a table's footer states under ``LEARNING_TABLE_SCHEMA_METADATA_KEY``:
+    its family, the schema version and the table, so one table of an export
+    cannot stand in for another either."""
+    return f"learning_data/{LEARNING_DATA_SCHEMA_VERSION}/{table_name}"
+
+
+def learning_table_columns(table_name: str) -> list[tuple[str, str]]:
+    """The exact ``(column, Arrow type)`` contract of ``table_name`` under
+    ``LEARNING_DATA_SCHEMA_VERSION``, in column order."""
+    return declared_columns(LEARNING_TABLE_SCHEMAS[table_name])
+
+
+def check_learning_table_frame(table_name: str, df: pl.DataFrame) -> None:
+    """A writer stamps only what the stamp declares."""
+    expected = LEARNING_TABLE_SCHEMAS[table_name]
+    if dict(df.schema) != expected:
+        raise ValueError(
+            f"{table_name}: frame columns {dict(df.schema)!r} are not the "
+            f"{LEARNING_DATA_SCHEMA_VERSION!r} contract {expected!r}"
+        )
+
+
+def check_learning_table_footer(
+    footer: pq.FileMetaData, table_name: str, *, uri: str
+) -> None:
+    """Refuse a Parquet file unless its footer states this table of the supported
+    schema version and its columns are that version's columns. Compatible-looking
+    columns alone are never evidence of a version."""
+    stated = stated_table_schema(footer)
+    expected = learning_table_schema_stamp(table_name)
+    if stated != expected.encode():
+        raise UnsupportedLearningDataSchemaError(
+            f"{uri}: footer states {LEARNING_TABLE_SCHEMA_METADATA_KEY}={stated!r}, "
+            f"this reader requires {expected!r} (ADR-019)"
+        )
+    columns = arrow_columns(footer.schema.to_arrow_schema())
+    if columns != learning_table_columns(table_name):
+        raise UnsupportedLearningDataSchemaError(
+            f"{uri}: states {expected!r} but its columns are {columns!r}, not "
+            f"{learning_table_columns(table_name)!r} (ADR-019)"
+        )
+
+
+def read_learning_table_bytes(
+    data: bytes, table_name: str, *, uri: str
+) -> pl.DataFrame:
+    """A whole single-file learning table, once its footer has been accepted."""
+    try:
+        footer = pq.read_metadata(io.BytesIO(data))
+    except pa.ArrowInvalid as exc:
+        raise UnsupportedLearningDataSchemaError(
+            f"{uri}: not a readable Parquet file: {exc}"
+        ) from exc
+    check_learning_table_footer(footer, table_name, uri=uri)
+    return pl.read_parquet(io.BytesIO(data))
+
 
 def build_learning_episodes_table(
     *,
@@ -128,6 +223,8 @@ def build_learning_episodes_table(
             "source_start_timestamp_us": artifact.aligned_episode.source_start_timestamp_us,
             "source_end_timestamp_us": artifact.aligned_episode.source_end_timestamp_us,
             "source_clock": artifact.aligned_episode.source_clock,
+            "clock_origin": artifact.aligned_episode.clock_origin.value,
+            "clock_scope": list(artifact.aligned_episode.clock_scope),
             "alignment_semantics_version": artifact.aligned_episode.alignment_semantics_version,
             "alignment_config_hash": alignment_config_hash(
                 artifact.aligned_episode.alignment_config
