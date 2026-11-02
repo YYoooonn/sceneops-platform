@@ -200,8 +200,14 @@ native reader or content builder, and no format has both. Current builder bounds
   [Derived layer](./derived-layer.md) §7.
 - `export_analytics_snapshot` covers Scene tables only. Observations are exported by
   payload reference (`payload_uri`, integrity, media type, `payload_selector`) for every
-  source; the analytical tables carry no schema version of their own. Aligned Episodes
-  have their own learning export.
+  source. Aligned Episodes have their own learning export.
+- Scene analytics tables state a whole clock instance per declared timestamp and their
+  schema in the footer ([ADR-020](../adr/020-scene-analytics-schema-v2.md)). That protects the
+  supported readers (`read_scene_table_bytes`, `AnalyticsTableWriter.read_table`,
+  `query_scene_analytics`). A Parquet file read directly is not checked, and SQL compares only what
+  it names: a join on clock id and timestamp alone still matches unrelated clocks. Tables of schema
+  `v1` stay in place and are refused. `robot_telemetry` and `missions` are unstamped, and
+  `robot_telemetry.timestamp_us` states no clock.
 - Native label import exists for nuScenes only (validated on the `scene-0061` slice);
   visibility, point counts and annotation prev / next links are not carried. An anchor
   carries no unit key, so a unit-origin clock cannot be labelled. Detection lifts
@@ -218,15 +224,15 @@ native reader or content builder, and no format has both. Current builder bounds
   ([ADR-018](../adr/018-aligned-episode-temporal-context.md),
   [ADR-019](../adr/019-learning-data-schema-v2-and-contract-aware-jobs.md)). Learning steps and
   signals reach it only through `SceneOpsDataset`, so a shard read alone has no temporal
-  interpretation. The Scene analytics tables keep clock ids only, so comparability cannot be
-  decided from them. Nothing yet checks that a stated clock scope belongs to the Episode stating
-  it, or statically forbids reading scope elements.
+  interpretation. Nothing yet checks that a clock scope stated by a derived table or artifact belongs
+  to the Scene or Episode stating it, or statically forbids reading scope elements.
 - An aligned artifact of schema `v1` and a learning export of schema `v1` are refused by every
   reader, and stay in place. A v1 export is never an incremental base. A PipelineRun's key does
   not see output schemas, so an unforced request identical to one that succeeded before a schema
   changed returns that old run, whose outputs are then refused at their next read; `force: true`
   produces a current run ([Jobs and pipelines](./jobs-and-pipelines.md)). VALIDATE, PROFILE and
-  EXPORT Jobs do see their contracts, so they are not affected. A CURATE_EPISODES Job over a v1
+  both EXPORT Jobs do see their contracts, so they are not affected, and no pipeline has an analytics
+  export task. A CURATE_EPISODES Job over a v1
   export can be returned unforced; the curation it names is refused when opened.
   `ALIGNMENT_SEMANTICS_VERSION` is not an input of the ALIGN_EPISODE execution key.
 - Alignment refuses an Episode with a `transition` stream

@@ -19,6 +19,12 @@ from .learning_tables import (
     learning_table_schema_stamp,
     read_learning_table_bytes,
 )
+from .parquet_contract import TABLE_SCHEMA_METADATA_KEY
+from .tables import (
+    check_scene_table_frame,
+    read_scene_table_bytes,
+    scene_table_schema_stamp,
+)
 
 
 def _canonical_bytes(payload: dict[str, Any]) -> bytes:
@@ -101,7 +107,16 @@ class AnalyticsTableWriter:
         dataset_id: str,
         dataset_version: str,
     ) -> AnalyticsTableWriteResult:
-        data = _parquet_bytes(df)
+        """One Scene analytics table, stating its schema in its footer. The stamp
+        is in the bytes the key names, so a table of another schema is always
+        another object."""
+        check_scene_table_frame(table_name, df)
+        buffer = io.BytesIO()
+        df.write_parquet(
+            buffer,
+            metadata={TABLE_SCHEMA_METADATA_KEY: scene_table_schema_stamp(table_name)},
+        )
+        data = buffer.getvalue()
         return await self._publish(
             self.table_uri(
                 dataset_id=dataset_id,
@@ -111,6 +126,11 @@ class AnalyticsTableWriter:
             ),
             data,
         )
+
+    async def read_table(self, table_name: str, uri: str) -> pl.DataFrame:
+        """A whole Scene analytics table, once its footer and rows are accepted."""
+        data = await self.artifact_store.read_bytes(uri)
+        return read_scene_table_bytes(data, table_name, uri=uri)
 
     def robot_run_table_uri(
         self, *, robot_run_id: str, table_name: str, checksum: str

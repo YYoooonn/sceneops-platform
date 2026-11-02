@@ -40,9 +40,12 @@ from infra_support import (
     SCENE_BUILD_CONFIG,
     Api,
 )
+from sceneops_analytics import read_scene_table_bytes
 from sceneops_core.artifacts.schemas.enums import ArtifactBackend
 from sceneops_core.config import StorageSettings
 from sceneops_core.provenance import manifest_artifact_id_for
+from sceneops_core.scenes.schemas import load_canonical_scene_manifest
+from sceneops_core.temporal import restore_clock_instance
 from sceneops_storage.backends.s3 import S3ArtifactStore
 
 SNAPSHOTS = json.loads((REPO_ROOT / "config/reference/source-snapshots.json").read_text())["snapshots"]
@@ -349,6 +352,36 @@ def test_validation_and_profiling_take_mixed_sources_in_one_job(api: Api, record
     assert (quality["readiness"], quality["validation"]["readySceneCount"]) == ("ready", 2)
 
 
+def _assert_analytics_state_each_scenes_own_context(api: Api, export: dict) -> None:
+    """Read back from MinIO through the supported reader: every timestamp states what
+    its own Scene's canonical manifest declares, and the scenes table its own source."""
+    store = _store()
+    records = {r["sceneId"]: r for r in api.members("scenes", DATASET, "pins")}
+    manifests = {}
+    for scene_id, record in records.items():
+        artifact = api.get(f"/artifacts/{record['manifestArtifactId']}")["artifact"]
+        manifests[scene_id] = load_canonical_scene_manifest(asyncio.run(store.read_bytes(artifact["uri"])))
+    columns = {
+        "scenes": ("window_clock", "window_clock_origin", "window_clock_scope"),
+        "observations": ("source_clock", "clock_origin", "clock_scope"),
+        "keyframes": ("source_clock", "clock_origin", "clock_scope"),
+    }
+    for table_name, (clock, origin, scope) in columns.items():
+        uri = export["table_uris"][table_name]
+        table = read_scene_table_bytes(asyncio.run(store.read_bytes(uri)), table_name, uri=uri)
+        assert table.height == export["row_counts"][table_name]
+        for row in table.select("scene_id", clock, origin, scope).unique().to_dicts():
+            assert restore_clock_instance(row[clock], row[origin], row[scope]) == (
+                manifests[row["scene_id"]].clock_instance(row[clock])
+            )
+        if table_name == "scenes":
+            for row in table.to_dicts():
+                record = records[row["scene_id"]]
+                assert (row["source_kind"], row["robot_run_id"], row["content_id"]) == (
+                    record["sourceKind"], record["robotRunId"], record["contentId"],
+                )  # fmt: skip
+
+
 def test_consumers_resolve_or_refuse_a_mixed_version_explicitly(api: Api, by_pins: dict, recording: dict, pusht: dict) -> None:
     before = _objects()
     # Sample views read observations only: the nuScenes Scene gets a view, the
@@ -366,6 +399,7 @@ def test_consumers_resolve_or_refuse_a_mixed_version_explicitly(api: Api, by_pin
     export = _succeeded(api, "export_analytics_snapshot", {"dataset_id": DATASET, "dataset_version": "pins"})
     assert export["row_counts"]["scenes"] == 2
     assert export["row_counts"]["observations"] == EXPECTED["summary"]["observation_count"]
+    _assert_analytics_state_each_scenes_own_context(api, export)
     # Alignment refuses a pusht member and aligns the RobotRun Episode of the same version.
     members = {m["episodeId"]: m for m in api.members("episodes", DATASET, "pins")}
 

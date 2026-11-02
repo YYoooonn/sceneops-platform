@@ -271,11 +271,16 @@ Everything downstream of registration reads canonical Scenes through a pin:
   payloads by their Logical URIs through the verified payload reader, and
   refuse a view whose Scene revision blocked downstream use. See [Derived layer](./derived-layer.md).
 - `EXPORT_ANALYTICS_SNAPSHOT` writes `scenes`, `observations` and `keyframes`
-  tables from the verified revisions the DatasetVersion pins. Every timestamp
-  column is paired with its `source_clock`; observations carry their payload
-  reference (`payload_uri`, checksum, size, media type and `payload_selector` as
-  canonical JSON), the same for every source, never a location. Every table is
-  built before any is written, so a failed export writes no table.
+  tables from the verified revisions the DatasetVersion pins. Every declared timestamp
+  states its clock instance as its row's own manifest declares it: `window_clock`,
+  `window_clock_origin`, `window_clock_scope` on `scenes`, and `source_clock`,
+  `clock_origin`, `clock_scope` on `observations` and `keyframes`. `scenes` also states its
+  source (`source_kind`, and `robot_run_id` or `content_id`), which is provenance and no part
+  of comparability. Observations carry their payload reference (`payload_uri`, checksum,
+  size, media type and `payload_selector` as canonical JSON), the same for every source,
+  never a location. Every table is built and checked before any is written, so a failed
+  export writes no table. The persisted contract is
+  [ADR-020](../adr/020-scene-analytics-schema-v2.md).
 
 ## 6. Producer: RecordingSceneBuilder
 

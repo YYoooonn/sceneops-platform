@@ -148,6 +148,7 @@ Open:
 - **CURATE_EPISODES** keeps its key. Its result pins an export by checksum, so an unforced repeat
   over a v1 export returns the old Job; the curation it names is refused by `SceneOpsDataset`,
   which checks the export it pins.
-- **P5.2B:** Scene analytics tables still carry clock ids only.
+- **P5.2B:** Scene analytics tables still carry clock ids only (closed by
+  [ADR-020](./020-scene-analytics-schema-v2.md)).
 - **P5.3:** nothing ties a stated scope to the Episode's canonical manifest, or statically forbids
   reading scope elements.

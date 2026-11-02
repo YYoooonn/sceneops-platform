@@ -58,21 +58,41 @@ from sceneops_analytics.learning_tables_sharded import (
     write_incremental_sharded_learning_tables,
     write_sharded_learning_tables,
 )
-from sceneops_analytics.query import query_parquet
+from sceneops_analytics.query import query_parquet, query_scene_analytics
 from sceneops_analytics.tables import (
     ROBOT_TABLE_BUILDERS,
+    SCENE_TABLE_SCHEMAS,
     TABLE_BUILDERS,
+    SceneAnalyticsIntegrityError,
+    SceneRevisionContent,
+    SceneRevisionPairingError,
+    UnsupportedSceneAnalyticsSchemaError,
     build_missions_table,
     build_robot_telemetry_table,
     build_keyframes_table,
     build_scenes_table,
     build_observations_table,
+    check_scene_table_files,
+    check_scene_table_frames,
+    read_scene_table_bytes,
+    scene_table_columns,
+    scene_table_schema_stamp,
 )
 from sceneops_analytics.writer import AnalyticsTableWriteResult, AnalyticsTableWriter
 
 __all__ = [
     "TABLE_BUILDERS",
     "ROBOT_TABLE_BUILDERS",
+    "SCENE_TABLE_SCHEMAS",
+    "SceneAnalyticsIntegrityError",
+    "SceneRevisionContent",
+    "SceneRevisionPairingError",
+    "UnsupportedSceneAnalyticsSchemaError",
+    "check_scene_table_files",
+    "check_scene_table_frames",
+    "read_scene_table_bytes",
+    "scene_table_columns",
+    "scene_table_schema_stamp",
     "LEARNING_TABLE_BUILDERS",
     "LEARNING_EPISODES_SCHEMA",
     "LEARNING_STEPS_SCHEMA",
@@ -95,6 +115,7 @@ __all__ = [
     "AnalyticsTableWriter",
     "AnalyticsTableWriteResult",
     "query_parquet",
+    "query_scene_analytics",
     "SceneOpsDataset",
     "SequenceSampler",
     "EpisodeMetadata",

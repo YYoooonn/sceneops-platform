@@ -75,6 +75,13 @@ from sceneops_core.episodes.learning_export import (
     UnsupportedLearningDataSchemaError,
 )
 
+from .parquet_contract import (
+    TABLE_SCHEMA_METADATA_KEY,
+    arrow_columns,
+    declared_columns,
+    stated_table_schema,
+)
+
 LEARNING_EPISODES_SCHEMA: dict[str, pl.PolarsDataType] = {
     "dataset_id": pl.Utf8,
     "dataset_version": pl.Utf8,
@@ -138,7 +145,7 @@ LEARNING_TABLE_SCHEMAS: dict[str, dict[str, pl.PolarsDataType]] = {
     "learning_signals": LEARNING_SIGNALS_SCHEMA,
 }
 
-LEARNING_TABLE_SCHEMA_METADATA_KEY = "sceneops.table_schema"
+LEARNING_TABLE_SCHEMA_METADATA_KEY = TABLE_SCHEMA_METADATA_KEY
 
 
 def learning_table_schema_stamp(table_name: str) -> str:
@@ -148,26 +155,10 @@ def learning_table_schema_stamp(table_name: str) -> str:
     return f"learning_data/{LEARNING_DATA_SCHEMA_VERSION}/{table_name}"
 
 
-def _arrow_type_contract(data_type: pa.DataType) -> str:
-    """An Arrow type as the column contract means it. Which Arrow string or list
-    width a writer chose, and what it named a list's child field, are not part of
-    the contract: Polars and PyArrow differ on those for the same column."""
-    if pa.types.is_string(data_type) or pa.types.is_large_string(data_type):
-        return "string"
-    if pa.types.is_list(data_type) or pa.types.is_large_list(data_type):
-        return f"list<{_arrow_type_contract(data_type.value_type)}>"
-    return str(data_type)
-
-
-def _arrow_columns(schema: pa.Schema) -> list[tuple[str, str]]:
-    return [(field.name, _arrow_type_contract(field.type)) for field in schema]
-
-
 def learning_table_columns(table_name: str) -> list[tuple[str, str]]:
     """The exact ``(column, Arrow type)`` contract of ``table_name`` under
     ``LEARNING_DATA_SCHEMA_VERSION``, in column order."""
-    empty = pl.DataFrame(schema=LEARNING_TABLE_SCHEMAS[table_name])
-    return _arrow_columns(empty.to_arrow().schema)
+    return declared_columns(LEARNING_TABLE_SCHEMAS[table_name])
 
 
 def check_learning_table_frame(table_name: str, df: pl.DataFrame) -> None:
@@ -186,14 +177,14 @@ def check_learning_table_footer(
     """Refuse a Parquet file unless its footer states this table of the supported
     schema version and its columns are that version's columns. Compatible-looking
     columns alone are never evidence of a version."""
-    stated = (footer.metadata or {}).get(LEARNING_TABLE_SCHEMA_METADATA_KEY.encode())
+    stated = stated_table_schema(footer)
     expected = learning_table_schema_stamp(table_name)
     if stated != expected.encode():
         raise UnsupportedLearningDataSchemaError(
             f"{uri}: footer states {LEARNING_TABLE_SCHEMA_METADATA_KEY}={stated!r}, "
             f"this reader requires {expected!r} (ADR-019)"
         )
-    columns = _arrow_columns(footer.schema.to_arrow_schema())
+    columns = arrow_columns(footer.schema.to_arrow_schema())
     if columns != learning_table_columns(table_name):
         raise UnsupportedLearningDataSchemaError(
             f"{uri}: states {expected!r} but its columns are {columns!r}, not "

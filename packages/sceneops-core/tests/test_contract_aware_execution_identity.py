@@ -1,10 +1,12 @@
-"""VALIDATE_ALIGNED_EPISODE, PROFILE_ALIGNED_EPISODE and EXPORT_LEARNING_DATA are
-keyed on the contracts their results depend on, and no other JobType moved.
+"""VALIDATE_ALIGNED_EPISODE, PROFILE_ALIGNED_EPISODE, EXPORT_LEARNING_DATA and
+EXPORT_ANALYTICS_SNAPSHOT are keyed on the contracts their results depend on, and no
+other JobType moved.
 
 The frozen keys were computed by the code before those contracts entered the keys:
 what a Job that succeeded back then still has in its execution_key column. Reuse
 against real rows is proven in
-apps/worker/tests/episodes/test_learning_schema_upgrade_integration.py.
+apps/worker/tests/episodes/test_learning_schema_upgrade_integration.py and
+apps/worker/tests/datasets/test_scene_analytics_upgrade_integration.py.
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ from sceneops_core.episodes.learning_export import LEARNING_DATA_SCHEMA_VERSION
 from sceneops_core.executions import compute_execution_key, params_for_execution_key
 from sceneops_core.executions import key as key_module
 from sceneops_core.jobs.schemas import JobType
+from sceneops_core.pipelines.builtin import BUILTIN_PIPELINE_DEFINITIONS
+from sceneops_core.scenes.analytics import SCENE_ANALYTICS_SCHEMA_VERSION
 
 A = "a" * 64
 
@@ -63,6 +67,7 @@ CASES = {
     },
     JobType.VALIDATE_EPISODE: {"episode_id": "ep-1"},
     JobType.EXPORT_ANALYTICS_SNAPSHOT: {"tables": ["scenes"]},
+    JobType.EXPORT_ROBOT_ANALYTICS_SNAPSHOT: {"robot_run_id": "run-1"},
     JobType.BUILD_SNAPSHOT_EPISODES: {"snapshot_id": "s", "build_config": {}},
 }
 
@@ -70,13 +75,13 @@ KEYS_BEFORE_THE_CONTRACTS_ENTERED = {
     JobType.VALIDATE_ALIGNED_EPISODE: "validate_aligned_episode:3e802bb3c3c96a20b4b29ec8",
     JobType.PROFILE_ALIGNED_EPISODE: "profile_aligned_episode:3956ff6aeb0d93fdf5b18afe",
     JobType.EXPORT_LEARNING_DATA: "export_learning_data:68b8cb2b59fa111c9e55aede",
+    JobType.EXPORT_ANALYTICS_SNAPSHOT: "export_analytics_snapshot:7a22c52ac893847fa4751373",
 }
 
 UNCHANGED_KEYS = {
     JobType.ALIGN_EPISODE: "align_episode:462f59d5daee999048546fe8",
     JobType.CURATE_EPISODES: "curate_episodes:acedcf635c741449030094c1",
     JobType.VALIDATE_EPISODE: "validate_episode:74588db3473c412a1f29bd6d",
-    JobType.EXPORT_ANALYTICS_SNAPSHOT: "export_analytics_snapshot:7a22c52ac893847fa4751373",
     JobType.BUILD_SNAPSHOT_EPISODES: "build_snapshot_episodes:bd53dd92c3269fc2ad19483f",
 }
 
@@ -164,6 +169,25 @@ def test_export_key_follows_the_learning_schema_and_not_the_aligned_one(
     assert _key(JobType.EXPORT_LEARNING_DATA) != current
 
 
+def test_analytics_export_key_follows_the_scene_analytics_schema_alone(
+    monkeypatch,
+) -> None:
+    current = _key(JobType.EXPORT_ANALYTICS_SNAPSHOT)
+    params = params_for_execution_key(
+        JobType.EXPORT_ANALYTICS_SNAPSHOT, CASES[JobType.EXPORT_ANALYTICS_SNAPSHOT]
+    )
+    assert params == {
+        "tables": ["scenes"],
+        "scene_analytics_schema_version": SCENE_ANALYTICS_SCHEMA_VERSION,
+    }
+
+    monkeypatch.setattr(key_module, "LEARNING_DATA_SCHEMA_VERSION", "v9")
+    monkeypatch.setattr(key_module, "ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION", "v9")
+    assert _key(JobType.EXPORT_ANALYTICS_SNAPSHOT) == current
+    monkeypatch.setattr(key_module, "SCENE_ANALYTICS_SCHEMA_VERSION", "v9")
+    assert _key(JobType.EXPORT_ANALYTICS_SNAPSHOT) != current
+
+
 def test_export_key_is_still_order_and_lineage_independent() -> None:
     one = {
         "episode_id": "a",
@@ -190,3 +214,16 @@ def test_repeating_a_request_converges_and_leaves_its_params_alone(job_type) -> 
     before = repr(CASES[job_type])
     assert _key(job_type) == _key(job_type)
     assert repr(CASES[job_type]) == before
+
+
+def test_the_analytics_export_runs_as_a_job_and_in_no_pipeline() -> None:
+    """So no reused PipelineRun can answer for a snapshot: its Job's key alone
+    decides. A pipeline that gains this task inherits PipelineRun reuse, which does
+    not see output contracts (ADR-019), and has to say how it upgrades."""
+    task_types = {
+        task.job_type
+        for definition in BUILTIN_PIPELINE_DEFINITIONS
+        for task in definition.tasks
+    }
+    assert JobType.EXPORT_LEARNING_DATA in task_types
+    assert JobType.EXPORT_ANALYTICS_SNAPSHOT not in task_types

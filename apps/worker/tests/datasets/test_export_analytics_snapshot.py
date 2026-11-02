@@ -7,9 +7,14 @@ import io
 from unittest.mock import MagicMock
 
 import polars as pl
+import pyarrow.parquet as pq
 import pytest
 
-from sceneops_analytics import AnalyticsTableWriter
+from sceneops_analytics import (
+    AnalyticsTableWriter,
+    SceneRevisionPairingError,
+    read_scene_table_bytes,
+)
 from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.common.checksums import sha256_checksum
 
@@ -141,10 +146,26 @@ async def test_exporting_changed_data_adds_a_revision_and_keeps_the_old_one(worl
     old_uri = first.table_uris["scenes"]
     old_bytes = await world.artifact_store.read_bytes(old_uri)
 
-    ((key, record),) = world.scenes.working[0].items()
-    world.scenes.working[0][key] = record.model_copy(
-        update={"observation_count": record.observation_count + 1}
+    # The same unit at another revision, under the same table's logical id. A real
+    # version never changes its pins: this stands in for any change of the bytes.
+    artifact = await world.publish(
+        world.manifest(
+            source=recording_source(unit_key="a"),
+            semantics_version=2,
+            keyframe_timestamps_ns=(1_000_000_000,),
+        )
     )
+    registered = await RegisterScenesJobHandler().run(
+        JobHandlerRequest(
+            job=_job(),
+            params=RegisterScenesJobParams(
+                manifest_artifact_ids=[artifact.artifact_id]
+            ),
+            context=world.context,
+        )
+    )
+    ((pin,),) = (registered.revisions,)
+    world.scenes.working[1][("ds", "v1")][pin.unit_id] = pin.manifest_checksum
     second = await _export(world, tables=["scenes"])
 
     assert second.table_uris["scenes"] != old_uri
@@ -169,7 +190,7 @@ async def test_a_failed_table_fails_the_export_before_any_table_is_written(
         raise TableBuildError("the observation table cannot be built")
 
     monkeypatch.setitem(
-        export_analytics_snapshot._MANIFEST_TABLE_BUILDERS, "observations", refuse
+        export_analytics_snapshot._TABLE_BUILDERS, "observations", refuse
     )
     await _register(world, "a")
     before = await world.artifact_store.list_objects(f"{world.root}/analytics")
@@ -177,3 +198,62 @@ async def test_a_failed_table_fails_the_export_before_any_table_is_written(
         await _export(world)
     assert await world.artifact_store.list_objects(f"{world.root}/analytics") == before
     assert _table_records(world) == []
+
+
+async def test_every_table_states_its_schema(world):
+    await _register(world, "a")
+    result = await _export(world)
+
+    for table_name, uri in result.table_uris.items():
+        data = await world.artifact_store.read_bytes(uri)
+        footer = pq.read_metadata(io.BytesIO(data))
+        assert footer.metadata[b"sceneops.table_schema"] == (
+            f"scene_analytics/v2/{table_name}".encode()
+        )
+        assert read_scene_table_bytes(data, table_name, uri=uri).height > 0
+
+
+async def test_a_record_the_manifest_does_not_project_refuses_the_export(world):
+    """The pin is verified and the manifest read, but the record's projection of it
+    is not what the manifest determines: no table is written from either."""
+    await _register(world, "a")
+    ((key, record),) = world.scenes.working[0].items()
+    world.scenes.working[0][key] = record.model_copy(
+        update={"observation_count": record.observation_count + 1}
+    )
+    with pytest.raises(SceneRevisionPairingError):
+        await _export(world, tables=["scenes"])
+    assert _table_records(world) == []
+
+
+async def test_a_second_clock_exports_as_each_row_declares_it(world):
+    manifest = world.manifest(
+        source=recording_source(unit_key="a"),
+        source_clock="sensor.lidar",
+        camera_clock="sensor.camera",
+    )
+    artifact = await world.publish(manifest)
+    registered = await RegisterScenesJobHandler().run(
+        JobHandlerRequest(
+            job=_job(),
+            params=RegisterScenesJobParams(
+                manifest_artifact_ids=[artifact.artifact_id]
+            ),
+            context=world.context,
+        )
+    )
+    world.scenes.pin(registered.revisions)
+    result = await _export(world)
+
+    scene = (await _table(world, result.table_uris["scenes"])).row(0, named=True)
+    assert scene["window_clock"] == "mcap_log_time"
+    observations = await _table(world, result.table_uris["observations"])
+    keyframes = await _table(world, result.table_uris["keyframes"])
+    assert set(observations["source_clock"]) == {"sensor.camera", "sensor.lidar"}
+    assert set(keyframes["source_clock"]) == {"sensor.lidar"}
+    for row in [*observations.to_dicts(), *keyframes.to_dicts()]:
+        instance = manifest.clock_instance(row["source_clock"])
+        assert (row["clock_origin"], tuple(row["clock_scope"])) == (
+            instance.origin.value,
+            instance.scope,
+        )

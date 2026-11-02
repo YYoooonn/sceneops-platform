@@ -11,6 +11,7 @@ from sceneops_core.episodes.alignment import (
 )
 from sceneops_core.episodes.learning_export import LEARNING_DATA_SCHEMA_VERSION
 from sceneops_core.jobs.schemas.enums import JobType
+from sceneops_core.scenes.analytics import SCENE_ANALYTICS_SCHEMA_VERSION
 
 
 def _exclude_keys(*excluded: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
@@ -130,6 +131,19 @@ def _export_learning_data_transform(params: dict[str, Any]) -> dict[str, Any]:
     return transformed
 
 
+def _export_analytics_snapshot_transform(params: dict[str, Any]) -> dict[str, Any]:
+    """EXPORT_ANALYTICS_SNAPSHOT's result names tables of one schema, and the schema
+    is no job input: without it a Job that succeeded under an earlier schema would
+    be returned, and its result names tables today's readers refuse. The canonical
+    manifest schema is deliberately not injected: the DatasetVersion pins its
+    revisions by content."""
+
+    return {
+        **params,
+        "scene_analytics_schema_version": SCENE_ANALYTICS_SCHEMA_VERSION,
+    }
+
+
 def _curate_episodes_transform(params: dict[str, Any]) -> dict[str, Any]:
     """CURATE_EPISODES's execution identity must be content-addressed, not
     lineage/order-addressed (SceneOps V2 Request 2.6 §10/§11): strip the
@@ -198,6 +212,7 @@ _EXECUTION_KEY_PARAM_TRANSFORMS: dict[
         semantics_version=ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION,
     ),
     JobType.EXPORT_LEARNING_DATA: _export_learning_data_transform,
+    JobType.EXPORT_ANALYTICS_SNAPSHOT: _export_analytics_snapshot_transform,
     JobType.CURATE_EPISODES: _curate_episodes_transform,
 }
 

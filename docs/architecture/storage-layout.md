@@ -201,17 +201,24 @@ changed data adds a revision beside the old one; nothing is overwritten.
 Each table is registered as an `ANALYTICS_TABLE` ArtifactRecord whose id
 derives from the table and that checksum.
 
+Each table states its schema in its Parquet footer: `sceneops.table_schema` =
+`scene_analytics/<version>/<table>`. The stamp is part of those bytes, so tables of two
+schemas are always two objects and two records, side by side, and old ones stay in place.
+Readers refuse anything but the current version's stamp and columns
+([ADR-020](../adr/020-scene-analytics-schema-v2.md)).
+
 Robot data is a separate scope from Dataset, so the same writer uses a
 second path scheme:
 `analytical/robot_runs/{robot_run_id}/{table_name}-{sha256}.parquet`
 (`robot_telemetry`/`missions`, written by `export_robot_analytics_snapshot`
 — see [Robot data ingestion](../workflows/robot-run-and-mcap.md) §4).
 
-The Parquet analytics layer is implemented and query-verified end to end —
-`sceneops_analytics.query_parquet()` runs real DuckDB SQL against local
-Parquet files (including cross-table joins). MinIO/S3-stored Parquet files
-can't be queried directly without DuckDB's httpfs/S3 extension (not wired
-up); the supported path downloads to local disk first, then queries.
+The Parquet analytics layer is implemented and query-verified end to end.
+`sceneops_analytics.query_scene_analytics()` proves local Scene tables, then runs
+DuckDB SQL over them; `query_parquet()` does the same for any other local Parquet file
+and refuses a Scene table. MinIO/S3-stored Parquet files can't be queried directly without
+DuckDB's httpfs/S3 extension (not wired up); the supported path downloads to local disk
+first, then queries.
 
 `export_analytics_snapshot` only covers Scene-domain tables — Episode has
 no equivalent flat export. Aligned Episode revisions
