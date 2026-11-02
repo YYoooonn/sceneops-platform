@@ -145,6 +145,32 @@ these exactly.
   `previous`, otherwise `nearest`), never from channel names. The timeline
   spans the Episode window when aligning on its clock. Alignment semantics
   version `v3`.
+- An `AlignedEpisode` states the origin instance of its clock once, as the source
+  EpisodeManifest issues it (`manifest.clock_instance(clock)`): `source_clock`,
+  `clock_origin` and `clock_scope`, an ordered tuple of strings. All three are required
+  and `clock_instance` reconstructs the instance. Two aligned timelines are comparable
+  exactly when their instances are equal (`require_comparable`), never because their
+  clock ids or timestamp values match. The scope is opaque: no consumer reads what an
+  element names, and `restore_clock_instance` checks its structure, not that it belongs
+  to the Episode the artifact names. See
+  [ADR-018](../adr/018-aligned-episode-temporal-context.md).
+
+### Aligned artifact versions
+
+Three versions answer different questions and move independently:
+
+| Version | Answers | Current |
+| --- | --- | --- |
+| `ALIGNMENT_SEMANTICS_VERSION` | how the algorithm behaves | `v3` |
+| `ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION` | the shape of the persisted artifact | `v2` |
+| `alignment_key` | where this recipe's artifact is stored: the config hash, both versions above and the clock | derived |
+
+The artifact schema version also participates in the ALIGN_EPISODE execution key, so a
+Job that succeeded under an earlier schema is not reused. Every read of a persisted
+artifact goes through `load_aligned_episode_artifact`, which refuses any other version
+(`UnsupportedAlignedArtifactSchemaError`), and a document that states none. An artifact
+of an earlier schema stays where it is, unmodified, and is not readable: align the
+Episode again to get one of the current schema.
 
 ### Signal presence (2.2, 2.5A, 2.7A)
 
@@ -283,6 +309,9 @@ per-instance caches.
   `torch.utils.data.Dataset` yet. `SequenceSampler.get(index)` is async;
   `Dataset.__getitem__` is a hard synchronous contract with no established
   sync read path in `sceneops-storage` to build a lazy bridge on safely.
+- The learning tables keep `source_clock` but not `clock_origin` or `clock_scope`, so
+  whether two exports' timestamps are comparable cannot be decided from Parquet; it takes
+  the aligned artifacts they pin.
 - Dense feature projection (2.7A) supports numeric scalar/vector only --
   orientation/reference/binary values are not projectable in v1.
 - `reference_channel` and `reference_metadata` other than its selector on a

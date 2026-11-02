@@ -118,6 +118,36 @@ async def test_force_bypasses_dedup():
     assert first.pipeline_run.pipeline_run_id != second.pipeline_run.pipeline_run_id
 
 
+async def test_a_pipeline_run_key_does_not_see_an_output_schema_upgrade(monkeypatch):
+    """The limitation an upgrade has to plan for: a PipelineRun's key is its
+    request, so after ALIGN_EPISODE's output schema changes an unforced identical
+    request still returns the run that succeeded under the old schema, whose
+    aligned artifacts today's readers refuse. ``force`` is the way to a fresh
+    run, and its task Jobs carry no execution key, so nothing reuses the old
+    Job underneath it."""
+    service, runs = _service()
+    request = dict(
+        type=PipelineType.EPISODE_LEARNING_DATA_BUILDING,
+        params={"align_episode": {"episodes": [{"episode_id": "ep-1"}]}},
+    )
+    old = await service.create_pipeline_run(_request(**request))
+    runs.runs[old.pipeline_run.pipeline_run_id].status = PipelineRunStatus.SUCCEEDED
+
+    monkeypatch.setattr(
+        "sceneops_core.executions.key.ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION", "v99"
+    )
+
+    reused = await service.create_pipeline_run(_request(**request))
+    assert reused.pipeline_run.pipeline_run_id == old.pipeline_run.pipeline_run_id
+
+    fresh = await service.create_pipeline_run(_request(force=True, **request))
+    assert fresh.pipeline_run.pipeline_run_id != old.pipeline_run.pipeline_run_id
+    assert fresh.pipeline_run.status == PipelineRunStatus.PENDING
+    assert {task.pipeline_task_id for task in fresh.tasks} == {
+        task.pipeline_task_id for task in old.tasks
+    }
+
+
 async def test_different_dataset_version_not_deduped():
     service, _ = _service()
 

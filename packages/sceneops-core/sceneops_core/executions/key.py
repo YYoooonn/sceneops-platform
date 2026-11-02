@@ -5,6 +5,7 @@ import json
 from typing import Any, Callable
 
 from sceneops_core.episodes.alignment import (
+    ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION,
     ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION,
     ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION,
 )
@@ -35,7 +36,12 @@ def _align_episode_transform(params: dict[str, Any]) -> dict[str, Any]:
     Episode's lineage-only ``source_artifact_id`` is stripped (the pinned
     ``source_manifest_sha256`` is the content identity, same reasoning as
     _exclude_keys above) and the Episodes are sorted so two calls pinning
-    the same set in a different order dedup to one execution."""
+    the same set in a different order dedup to one execution.
+
+    Also injects the schema version of the artifact the Job writes. It is no
+    job input, so without it a Job that succeeded under an earlier schema
+    would be returned as the result of a request for the current one, and its
+    result names artifacts today's readers refuse."""
 
     episodes = params.get("episodes")
     transformed = dict(params)
@@ -52,6 +58,9 @@ def _align_episode_transform(params: dict[str, Any]) -> dict[str, Any]:
             )
         )
         transformed["episodes"] = stripped
+    transformed["aligned_artifact_schema_version"] = (
+        ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION
+    )
     return transformed
 
 

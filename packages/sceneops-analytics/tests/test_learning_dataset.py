@@ -147,6 +147,8 @@ def _episode(
         source_start_timestamp_us=0,
         source_end_timestamp_us=(len(steps) - 1) * 100_000,
         source_clock="mcap_log_time",
+        clock_origin="source",
+        clock_scope=("test-source",),
         alignment_semantics_version=ALIGNMENT_SEMANTICS_VERSION,
         alignment_config=_CONFIG,
         target_frequency_hz=10.0,

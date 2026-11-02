@@ -298,7 +298,11 @@ dedup, and assertions are scoped to values the current run returned, not to
 global counts. The exceptions are the Scene ML pipeline and the first Episode learning
 pipeline of the journeys: they are requested without `force`, because a forced
 re-execution of the Scene ML stages appends scenario-mining and readiness reports under
-fresh Job ids on every run (`test-matrix.md`, Execution history).
+fresh Job ids on every run (`test-matrix.md`, Execution history). For the same reason a
+journey run against a reference environment that holds an Episode learning run from before
+an aligned-artifact schema change gets that old run, and its validation stage refuses the
+old artifact; request that pipeline once with `force: true`
+([ADR-018](../adr/018-aligned-episode-temporal-context.md)).
 
 ## Operator tools
 

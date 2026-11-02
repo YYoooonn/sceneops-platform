@@ -25,6 +25,7 @@ from .clocks import (
     check_clock_domains,
     clock_instance,
     require_comparable,
+    restore_clock_instance,
 )
 from .frame_time import NS_PER_SECOND, frame_index_of, frame_time_ns
 from .source_time import INT64_MAX, SourceTimestampNs, SourceTimeUnit, promote_to_ns
@@ -46,4 +47,5 @@ __all__ = [
     "frame_time_ns",
     "promote_to_ns",
     "require_comparable",
+    "restore_clock_instance",
 ]

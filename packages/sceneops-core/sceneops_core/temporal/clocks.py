@@ -35,7 +35,7 @@ relative time, shifts a clock or merges two clocks.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated
@@ -49,7 +49,10 @@ from pydantic import (
     StrictStr,
 )
 
-from sceneops_core.common.identifiers import validate_source_clock
+from sceneops_core.common.identifiers import (
+    validate_source_clock,
+    validate_verbatim_key,
+)
 
 
 class ClockOrigin(StrEnum):
@@ -116,6 +119,40 @@ def clock_instance(domain: ClockDomain, scope: OriginScope) -> ClockInstance:
     else:
         key = scope.unit
     return ClockInstance(clock=domain.clock, origin=domain.origin, scope=key)
+
+
+def restore_clock_instance(
+    clock: str, origin: ClockOrigin | str, scope: Sequence[str]
+) -> ClockInstance:
+    """The origin instance a derived representation persisted as its triple
+    ``(clock, origin, scope)``, refused unless it has the shape an issued
+    instance has: a canonical clock id, a known origin, an ordered sequence of
+    unambiguous strings, empty exactly for ``unix_epoch``.
+
+    The check is structural. Scope elements stay opaque, so it neither reads
+    what they name nor establishes that the scope belongs to the unit the
+    representation describes; that takes the unit's canonical manifest."""
+    try:
+        validate_source_clock(clock)
+        resolved = ClockOrigin(origin)
+    except ValueError as exc:
+        raise ClockDomainError(str(exc)) from exc
+    if not isinstance(scope, (list, tuple)):
+        raise ClockDomainError(
+            f"clock scope must be an ordered sequence, got {type(scope).__name__}"
+        )
+    try:
+        for element in scope:
+            validate_verbatim_key(element, field="clock scope element")
+    except ValueError as exc:
+        raise ClockDomainError(str(exc)) from exc
+    if (resolved == ClockOrigin.UNIX_EPOCH) == bool(scope):
+        raise ClockDomainError(
+            f"a {resolved.value} clock instance "
+            f"{'has no scope' if resolved == ClockOrigin.UNIX_EPOCH else 'needs a scope'}, "
+            f"got {list(scope)}"
+        )
+    return ClockInstance(clock=clock, origin=resolved, scope=tuple(scope))
 
 
 def require_comparable(a: ClockInstance, b: ClockInstance) -> None:
@@ -186,4 +223,5 @@ __all__ = [
     "check_clock_domains",
     "clock_instance",
     "require_comparable",
+    "restore_clock_instance",
 ]

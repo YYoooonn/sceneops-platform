@@ -18,7 +18,10 @@ from sceneops_core.artifacts.schemas import (
     ArtifactOwnerType,
     ArtifactRecord,
 )
-from sceneops_core.episodes.alignment import AlignedEpisodeArtifact
+from sceneops_core.episodes.alignment import (
+    AlignedEpisodeArtifact,
+    load_aligned_episode_artifact,
+)
 
 from sceneops_worker.core.context import WorkerContext
 
@@ -103,5 +106,5 @@ async def resolve_and_verify_aligned_artifact(
             )
         checksum_verified = True
 
-    artifact = AlignedEpisodeArtifact.model_validate_json(raw_bytes)
+    artifact = load_aligned_episode_artifact(raw_bytes)
     return record, artifact, checksum_verified

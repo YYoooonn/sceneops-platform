@@ -442,9 +442,12 @@ def test_an_episode_built_without_transitions_aligns_its_video_frame_references(
     alignment accepts the Episode and carries each video-frame PayloadRef whole --
     uri, checksum, size, media type and selector. References are aligned; no
     frame is decoded."""
-    from sceneops_core.episodes.alignment.persistence import AlignedEpisodeArtifact
+    from sceneops_core.episodes.alignment.persistence import (
+        load_aligned_episode_artifact,
+    )
     from sceneops_core.episodes.alignment.semantics import ALIGNMENT_SEMANTICS_VERSION
     from sceneops_core.episodes.schemas.manifests import load_canonical_episode_manifest
+    from sceneops_core.temporal import ClockOrigin
 
     features = [f for f in BUILD_CONFIG["features"] if f["role"] != "transition"]
     api.dataset(DATASET)
@@ -496,10 +499,13 @@ def test_an_episode_built_without_transitions_aligns_its_video_frame_references(
     )  # fmt: skip
     assert job["status"] == "succeeded", job.get("error")
     (ref,) = job["result"]["aligned"]
-    aligned = AlignedEpisodeArtifact.model_validate(
-        json.loads(asyncio.run(_store().read_bytes(ref["aligned_artifact_uri"])))
+    aligned = load_aligned_episode_artifact(
+        asyncio.run(_store().read_bytes(ref["aligned_artifact_uri"]))
     ).aligned_episode
     assert aligned.alignment_semantics_version == ALIGNMENT_SEMANTICS_VERSION == "v3"
+    # A frame grid's clock is the Episode's own: the scope the manifest issues.
+    assert aligned.clock_instance == manifest.clock_instance(aligned.source_clock)
+    assert aligned.clock_origin == ClockOrigin.UNIT
     references = [
         s
         for step in aligned.steps

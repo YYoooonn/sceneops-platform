@@ -169,9 +169,13 @@ explicit alignment config; it is the first stage of
 `episode_learning_data_building` (followed by `export_learning_data`).
 `validate_aligned_episode` and `profile_aligned_episode` are atomic jobs over one
 pinned aligned revision. The recipe key covers the full config, the
-semantics version and the alignment clock; the artifact is write-once at its
-key and its ArtifactRecord id derives from the Episode id and checksum. Its
-DatasetVersion scope is the Episode's. The canonical Episode is not modified.
+semantics version, the alignment clock and the artifact schema version; the
+artifact is write-once at its key and its ArtifactRecord id derives from the
+Episode id and checksum. Its DatasetVersion scope is the Episode's. The artifact
+states the clock instance the source manifest issues, and a reader refuses an
+artifact of another schema version
+([Robot learning data](./robot-learning-data.md) §4). The canonical Episode is not
+modified.
 
 `export_learning_data` exports pinned aligned artifacts (in the pipeline, the
 ones `align_episode` produced) with an explicit

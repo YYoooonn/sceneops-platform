@@ -25,6 +25,7 @@ from sceneops_core.episodes.alignment import (
     EpisodeSourceRevision,
     TemporalAlignmentConfig,
     TemporalSourceContext,
+    UnsupportedAlignedArtifactSchemaError,
     align_episode,
 )
 from sceneops_core.episodes.testing import (
@@ -44,6 +45,7 @@ from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset._aligned_episode_resolution import (
     AlignedArtifactChecksumMismatchError,
     AlignedArtifactNotFoundError,
+    resolve_and_verify_aligned_artifact,
 )
 from sceneops_worker.jobs.dataset.validate_aligned_episode import (
     ValidateAlignedEpisodeJobHandler,
@@ -264,3 +266,27 @@ class TestWriteFailureLeavesNoRecord:
 
         context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()
+
+
+async def test_a_stored_artifact_of_an_earlier_schema_is_refused_and_writes_nothing() -> (
+    None
+):
+    document = json.loads(_artifact_bytes())
+    document["schemaVersion"] = "v1"
+    del document["alignedEpisode"]["clockOrigin"]
+    del document["alignedEpisode"]["clockScope"]
+    data = json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    context = _make_context(
+        aligned_record=_aligned_record(
+            checksum="sha256:" + hashlib.sha256(data).hexdigest()
+        ),
+        artifact_bytes=data,
+    )
+    with pytest.raises(UnsupportedAlignedArtifactSchemaError, match="'v1'"):
+        await resolve_and_verify_aligned_artifact(
+            context,
+            episode_id="ep-1",
+            aligned_artifact_id="art-aligned-1",
+            expected_checksum=None,
+        )
+    context.episode_artifact_store.write_aligned_episode_report.assert_not_awaited()

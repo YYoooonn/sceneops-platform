@@ -214,6 +214,19 @@ native reader or content builder, and no format has both. Current builder bounds
 - LeRobot is the only external export format; no integration-run record is
   persisted ([Dataset interoperability](./dataset-interoperability.md) §10,
   [External integration runtime](./external-integration-runtime.md) §4).
+- An aligned artifact states its clock instance
+  ([ADR-018](../adr/018-aligned-episode-temporal-context.md)); the learning tables and
+  the Scene analytics tables keep clock ids only, so comparability cannot be decided from
+  those tables. Nothing yet checks that an artifact's clock scope belongs to the Episode
+  it names, or statically forbids reading scope elements.
+- An aligned artifact of schema `v1` is refused by every reader. A PipelineRun's key does
+  not see the output schema, so an unforced request identical to one that succeeded before
+  the schema changed returns that old run, whose artifacts are then refused at their next
+  read; `force: true` produces a current run
+  ([Jobs and pipelines](./jobs-and-pipelines.md)). An incremental learning export reuses
+  its base's shards without reading their aligned artifacts, and curation of an export
+  pinning `v1` artifacts is refused. `ALIGNMENT_SEMANTICS_VERSION` is not an input of the
+  ALIGN_EPISODE execution key.
 - Alignment refuses an Episode with a `transition` stream
   (`UnsupportedEpisodeContentError`), so a LeRobot Episode built with a `next.*`
   feature is not aligned or exported. Without one, alignment carries its video frames

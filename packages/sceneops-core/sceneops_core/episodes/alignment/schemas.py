@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from pydantic import Field
+from typing import Any
+
+from pydantic import Field, StrictStr, field_validator, model_validator
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.episodes.schemas.enums import EpisodeOutcome
 from sceneops_core.sensors import SensorModality
+from sceneops_core.temporal import (
+    ClockInstance,
+    ClockOrigin,
+    restore_clock_instance,
+)
 
 from .config import TemporalAlignmentConfig
 from .enums import AlignedSignalStatus, AlignedValueKind, AssociationPolicy
@@ -65,13 +72,22 @@ class AlignedEpisode(SceneOpsBaseModel):
     Request 2.2 §33). Deliberately excludes persistence/runtime fields
     (ArtifactRecord.artifact_id, artifact URI, job_id, pipeline_run_id,
     source manifest content hash) — those are Request 2.3's responsibility,
-    not the pure engine's."""
+    not the pure engine's.
+
+    Every timestamp of the Episode is on one clock, so the origin instance
+    that says which other timestamps it may be compared with is stated once:
+    ``(source_clock, clock_origin, clock_scope)``, exactly as the source
+    EpisodeManifest issued it. The scope is opaque here and everywhere
+    downstream: comparability is ``clock_instance`` equality, nothing reads
+    what a scope element names."""
 
     episode_id: str
 
     source_start_timestamp_us: int
     source_end_timestamp_us: int
     source_clock: str
+    clock_origin: ClockOrigin
+    clock_scope: tuple[StrictStr, ...]
 
     alignment_semantics_version: str
     alignment_config: TemporalAlignmentConfig
@@ -88,3 +104,25 @@ class AlignedEpisode(SceneOpsBaseModel):
     metadata: JsonDict = Field(default_factory=dict)
 
     steps: list[LearningStep] = Field(default_factory=list)
+
+    @field_validator("clock_scope", mode="before")
+    @classmethod
+    def _scope_is_ordered(cls, value: Any) -> Any:
+        # Pydantic would otherwise build the tuple from any iterable, and the
+        # iteration order of a set is not a scope.
+        if not isinstance(value, (list, tuple)):
+            raise ValueError(
+                f"clock_scope must be an ordered sequence, got {type(value).__name__}"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _clock_context_is_one_instance(self) -> AlignedEpisode:
+        restore_clock_instance(self.source_clock, self.clock_origin, self.clock_scope)
+        return self
+
+    @property
+    def clock_instance(self) -> ClockInstance:
+        return restore_clock_instance(
+            self.source_clock, self.clock_origin, self.clock_scope
+        )

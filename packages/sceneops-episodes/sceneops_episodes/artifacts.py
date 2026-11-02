@@ -129,9 +129,9 @@ class EpisodeArtifactStore:
         Two independent, truncated (64-bit, collision-negligible at this
         scale) hash segments rather than one combined identity hash --
         source_manifest_sha256[:16] answers "which source content", the
-        alignment_key[:16] segment (config + semantics version, SceneOps V2
-        Request 2.3 persistence.alignment_key) answers "which alignment
-        recipe", independently of each other. A human reading the path can
+        alignment_key[:16] segment (config, semantics version, clock and
+        artifact schema version, persistence.alignment_key) answers "which
+        alignment recipe", independently of each other. A human reading the path can
         tell which one changed between two runs; a single opaque combined
         hash could not.
         """
@@ -223,9 +223,9 @@ class EpisodeArtifactStore:
             source_manifest_sha256=source_manifest_sha256,
             alignment_key=alignment_key,
         )
-        # An AlignedEpisode is a pure function of (source revision, alignment
-        # recipe), and both are in the key, so the same key always holds the
-        # same bytes: a retry is a no-op, anything else is a conflict.
+        # An artifact is a pure function of (source revision, alignment recipe
+        # including its schema), and both are in the key, so the same key always
+        # holds the same bytes: a retry is a no-op, anything else is a conflict.
         written = await write_once(
             self.artifact_store,
             uri,

@@ -10,6 +10,12 @@ class InvalidEpisodeBoundsError(AlignmentError):
     inverted bounds."""
 
 
+class UnsupportedAlignedArtifactSchemaError(AlignmentError, ValueError):
+    """A persisted AlignedEpisodeArtifact is not of the schema version this
+    reader supports. It is refused rather than read with part of its contract
+    missing; the object itself stays as it is."""
+
+
 class ClockMismatchError(AlignmentError):
     """A stream to align is timestamped in another clock than the one the
     alignment runs on. Timestamps of unrelated clocks are never compared or
